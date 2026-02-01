@@ -24,14 +24,15 @@ The architecture described here is based on a production deployment controlling 
 - **Specs**: 2 vCPU, 2GB RAM, 40GB SSD
 - **OS**: Ubuntu 20.04 LTS
 - **Services**:
-  - OpenClaw (with MiniMax API key for cheap LLM calls)
-  - Claude Code (Max subscription via OAuth)
+  - [OpenClaw](https://github.com/openclaw/openclaw) (with MiniMax API key for routing)
+  - Claude Code CLI (Max subscription via OAuth, not API)
   - Task API (this project's server.js)
 
 **Why this config**:
 - 2C2G is sufficient for lightweight task queuing
 - International server bypasses China's Discord firewall
-- Shared Claude Max subscription across cloud and local
+- Claude Code uses same Max subscription (OAuth) on both cloud and local
+- MiniMax API handles OpenClaw's routing decisions (cheap and fast)
 
 ### Local Computer
 
@@ -39,13 +40,14 @@ The architecture described here is based on a production deployment controlling 
 **OS**: macOS Sequoia (or later)
 **Services**:
 - Worker (this project's worker.js)
-- Claude Code CLI (Max subscription, same account as cloud)
-- baoyu-skills (optional, for extended capabilities)
+- Claude Code CLI (Max subscription via OAuth, same account as cloud)
+- baoyu-skills (optional, for extended capabilities like image generation)
 
 **Why this setup**:
 - Mac required for macOS-specific automation
 - M4 chip handles AI-assisted tasks efficiently
-- Shared Max subscription = no extra API costs
+- Claude Code uses Max subscription (OAuth), not API - same account works on cloud and local
+- No extra API costs beyond the Max subscription itself
 
 ## Step-by-Step Deployment
 
@@ -185,7 +187,7 @@ claude /login
 claude --version
 ```
 
-**Important**: Claude Code requires Max subscription. The same account can be used on both cloud and local machines.
+**Important**: Claude Code requires Max subscription (OAuth authentication). The same Max subscription account can be used on both cloud and local machines. This is NOT an API key - you authenticate via browser OAuth flow.
 
 #### 2.3 Deploy Worker
 
@@ -439,13 +441,14 @@ sudo journalctl -u openclaw-worker -f | grep -i "error\|unauthorized"
 | Item | Cost (USD) | Notes |
 |------|------------|-------|
 | Tencent Cloud Lighthouse (2C2G) | $4-8/mo | Silicon Valley region |
-| Claude Code Max Subscription | $20/mo | Shared cloud + local |
-| MiniMax API (OpenClaw) | $0-5/mo | Free tier usually sufficient |
+| Claude Max Subscription | $20/mo | OAuth-based, shared across cloud + local |
+| MiniMax API (for OpenClaw routing) | $0-5/mo | Free tier usually sufficient |
 | **Total** | **$24-33/mo** | Varies by usage |
 
 **Cost Optimization**:
-- Use cheapest LLM (MiniMax) for Discord bot routing
-- Share one Claude Max subscription across cloud and local
+- Use MiniMax API (cheap) for OpenClaw's routing decisions
+- Share one Claude Max subscription (OAuth) across cloud and local machines
+- No per-request API costs for Claude Code - subscription covers unlimited usage
 - Free tier adequate for personal use (< 1000 tasks/month)
 
 ## Scaling Considerations

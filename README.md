@@ -346,9 +346,11 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- Inspired by the need for simple remote control without VPN complexity
-- Built for the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem
+- Built for the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem - a powerful AI agent framework
+- Inspired by the challenges of running OpenClaw remote control (SSH tunnels, token mismatches)
 - Works great with [baoyu-skills](https://github.com/JimLiu/baoyu-skills) for content automation
+- Uses Claude Code with Max subscription (OAuth, not API) for local AI capabilities
+- Uses MiniMax API for OpenClaw's lightweight routing decisions
 
 ## Support
 
