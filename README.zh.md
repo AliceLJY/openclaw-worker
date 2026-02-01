@@ -346,9 +346,11 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ## 致谢
 
-- 源于对简单远程控制的需求，无需 VPN 的复杂性
-- 为 [OpenClaw](https://github.com/openclaw/openclaw) 生态系统构建
-- 与 [baoyu-skills](https://github.com/JimLiu/baoyu-skills) 配合使用效果极佳
+- 为 [OpenClaw](https://github.com/openclaw/openclaw) 生态系统构建 - 强大的 AI 代理框架
+- 源于 OpenClaw 原生远程控制的挑战（SSH 隧道、token 不匹配等问题）
+- 与 [baoyu-skills](https://github.com/JimLiu/baoyu-skills) 配合使用效果极佳，可实现内容自动化
+- 使用 Claude Code Max 订阅（OAuth 认证，非 API Key）提供本地 AI 能力
+- 使用 MiniMax API 供 OpenClaw 进行轻量级路由决策
 
 ## 支持
 
