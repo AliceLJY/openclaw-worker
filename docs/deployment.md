@@ -296,14 +296,47 @@ node --version  # Should be 18+
 # Install Claude Code CLI
 brew install claude
 
-# Login (opens browser for OAuth)
-claude /login
-
-# Verify
+# Verify installation
 claude --version
 ```
 
-**Important**: Claude Code requires Max subscription (OAuth authentication). The same Max subscription account can be used on both cloud and local machines. This is NOT an API key - you authenticate via browser OAuth flow.
+**Authentication: Choose Your Method**
+
+Claude Code supports three authentication methods:
+
+**Method 1: OAuth Login (Recommended for personal use)** ⭐
+```bash
+claude login
+```
+- Opens browser for OAuth authentication
+- Uses your Claude.ai subscription (Pro/Max)
+- Token stored in macOS Keychain
+- Same subscription works on cloud and local machines
+- **This is what we use in this project**
+
+**Method 2: API Key (For enterprise/API billing)**
+```bash
+claude login --api-key
+# Or set environment variable
+export ANTHROPIC_API_KEY="your-api-key"
+```
+- Uses Anthropic API key
+- Pay-per-use billing, separate from subscription
+- Good for API quota management
+
+**Method 3: Long-term Token (For servers/automation)**
+```bash
+claude setup-token
+```
+- Sets up long-term authentication token (requires Claude subscription)
+- Works in headless environments (servers, CI/CD)
+- No browser interaction needed
+
+**Important Notes**:
+- ✅ The same Claude Max subscription account can be used on both cloud and local machines (Method 1)
+- ✅ This is NOT an API key authentication - Methods 1 and 3 use subscription-based auth
+- ⚠️ Method 1 (OAuth) is recommended for this project setup
+- ⚠️ After authentication, Worker must be restarted to recognize the credentials
 
 #### 2.3 Deploy Worker
 
@@ -331,12 +364,19 @@ node worker.js
 
 #### 2.4 Create Startup Script
 
+**IMPORTANT**: Worker must use **login shell** (`bash -l`) to access Claude Code authentication tokens.
+
 ```bash
 # Create desktop shortcut
 cat > ~/Desktop/启动Worker.command << 'EOF'
 #!/bin/bash
-cd ~/openclaw-worker
-screen -dmS worker bash -c '
+# Kill old worker process
+pkill -f "node worker.js" 2>/dev/null
+screen -S worker -X quit 2>/dev/null
+
+# Start worker with LOGIN SHELL (-l flag is critical!)
+screen -dmS worker bash -l -c '
+  cd ~/openclaw-worker && \
   WORKER_URL=http://YOUR_CLOUD_IP:3456 \
   WORKER_TOKEN=your_token_here \
   POLL_INTERVAL=500 \
@@ -351,6 +391,26 @@ EOF
 chmod +x ~/Desktop/启动Worker.command
 
 # Double-click to start
+```
+
+**Why `-l` flag matters**:
+- Without `-l`: Non-login shell, doesn't load full environment, **can't access Keychain for Claude OAuth**
+- With `-l`: Login shell, loads `~/.zshrc` or `~/.bashrc`, **can access Claude authentication**
+
+**Troubleshooting Authentication**:
+```bash
+# Test if Worker environment can access Claude auth
+/bin/bash -l -c "claude auth status"
+
+# Should show:
+# ✅ "Logged in as ..." (OAuth working)
+# ❌ "Invalid API key" (needs login shell or reauth)
+
+# If authentication fails in Worker:
+1. Verify Claude login: claude login
+2. Kill old worker: pkill -f "node worker.js"
+3. Restart worker: ~/Desktop/启动Worker.command
+4. Test again from Discord/API
 ```
 
 #### 2.5 Auto-start on Wake (macOS)
@@ -492,18 +552,91 @@ pm2 logs openclaw-api
 2. Check `Authorization` header format: `Bearer <token>`
 3. Regenerate token if compromised
 
-### Claude Code Errors
+### Claude Code Authentication Errors
 
-**Symptoms**: "403 Forbidden" or "Not logged in"
+**Symptoms**: "403 Forbidden", "Not logged in", or "Invalid API key" when Worker executes Claude tasks
 
-**Solutions**:
+**Root Cause**: Worker can't access Claude Code authentication credentials
+
+**Step 1: Choose Authentication Method**
+
+Claude Code supports three authentication methods:
+
+**Method 1: OAuth (Recommended for personal use)** ⭐
 ```bash
-# Re-authenticate
-claude /login
-
-# Verify authentication
-claude "Hello"  # Should work without errors
+claude login  # Opens browser for authentication
 ```
+- Uses Claude.ai subscription (Pro/Max)
+- Token stored in macOS Keychain
+- Same subscription works on cloud and local
+- **Requires login shell to access Keychain**
+
+**Method 2: API Key (For enterprise/pay-per-use)**
+```bash
+claude login --api-key
+# Or
+export ANTHROPIC_API_KEY="your-api-key"
+```
+- Uses Anthropic API key
+- Pay-per-use billing
+- Doesn't need Keychain access
+
+**Method 3: Long-term Token (For servers/automation)**
+```bash
+claude setup-token  # No browser needed
+```
+- For headless environments (servers, CI/CD)
+- Requires Claude subscription
+- Doesn't need login shell
+
+**Step 2: Verify Authentication**
+```bash
+claude auth status
+# Should show: "Logged in as ..." or API key status
+```
+
+**Step 3: Ensure Worker Uses Login Shell (for OAuth)**
+
+⚠️ **CRITICAL for OAuth users**: Worker MUST use login shell (`-l` flag):
+
+```bash
+# ❌ Wrong (can't access Keychain):
+screen -dmS worker bash -c 'node worker.js'
+
+# ✅ Correct (accesses full environment):
+screen -dmS worker bash -l -c 'node worker.js'
+```
+
+**Why this matters**:
+- Non-login shell: No `~/.zshrc`/`~/.bashrc` → No Keychain access → Auth fails
+- Login shell: Loads full environment → Can access OAuth tokens → Auth works
+
+**Step 4: Test Worker Environment**
+```bash
+# Test if worker shell can access Claude
+/bin/bash -l -c "claude auth status"
+
+# Expected output:
+# ✅ OAuth: "Logged in as user@example.com"
+# ✅ API Key: Shows API key status
+# ❌ Problem: "Invalid API key" or "Not logged in"
+```
+
+**Step 5: Restart Worker Completely**
+```bash
+# Kill old worker process
+pkill -f "node worker.js"
+screen -S worker -X quit 2>/dev/null
+
+# Restart (use your startup script)
+~/Desktop/启动Worker.command
+```
+
+**Alternative Solutions**:
+
+- **If using API Key**: Set `ANTHROPIC_API_KEY` in startup script (doesn't need login shell)
+- **If on headless server**: Use Method 3 (long-term token) to avoid Keychain dependency
+- **If OAuth keeps failing**: Switch to Method 2 (API Key) for more reliable automation
 
 ### Tasks Timing Out
 
