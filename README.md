@@ -8,6 +8,19 @@
 
 **OpenClaw Worker** is a security-first polling architecture that enables cloud AI services (OpenClaw, Discord bots, Slack bots) to safely execute tasks on your local computer behind NAT/firewall. No port forwarding, no VPN, no SSH tunnels - just a simple, secure task queue.
 
+---
+
+## 🚀 Choose Your Deployment
+
+| Deployment | Best For | Guide |
+|------------|----------|-------|
+| **☁️ Cloud Deploy** | Remote access from anywhere, always-on | [Continue reading ↓](#the-problem-it-solves) |
+| **🐳 Docker Local** | Low latency, local use, extra isolation | [English](docs/docker-local.md) ｜ [中文](docs/docker-local.zh.md) |
+
+**Same architecture, different locations.** Both use the Worker polling model for security isolation.
+
+---
+
 ## The Problem It Solves
 
 Modern AI agents like OpenClaw are incredibly powerful but require extensive local permissions (file access, system commands, hardware control). Running them locally with full permissions is convenient but **risky** - one compromised prompt could expose your entire computer.
