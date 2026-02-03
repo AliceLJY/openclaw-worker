@@ -1,0 +1,60 @@
+# OpenClaw 本地 Docker 部署
+# 架构：Docker(OpenClaw + Task API) <-> 本地 Worker <-> 本地 CC
+#
+# Docker 内不装 CC，通过 Task API 调用外部 Worker
+
+services:
+  # OpenClaw 网关服务
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-gateway
+    restart: unless-stopped
+    ports:
+      - "18789:18789"  # Web UI
+      - "18790:18790"  # Bridge
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-~/.openclaw-docker}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-~/openclaw-workspace}:/home/node/workspace
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_GATEWAY_HOST=0.0.0.0
+      # 不配置 Anthropic API，通过 Task API 调用外部 CC
+    command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
+    init: true
+    networks:
+      - openclaw-net
+
+  # Task API 服务（从你现有的 server.js 构建）
+  task-api:
+    build:
+      context: ./task-api
+      dockerfile: Dockerfile
+    container_name: openclaw-task-api
+    restart: unless-stopped
+    ports:
+      - "3456:3456"  # Task API 端口
+    environment:
+      - WORKER_TOKEN=${WORKER_TOKEN}
+      - PORT=3456
+    networks:
+      - openclaw-net
+
+  # CLI 工具（按需启动）
+  openclaw-cli:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-cli
+    profiles: ["cli"]
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-~/.openclaw-docker}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-~/openclaw-workspace}:/home/node/workspace
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+    entrypoint: ["node", "openclaw.mjs"]
+    stdin_open: true
+    tty: true
+    networks:
+      - openclaw-net
+
+networks:
+  openclaw-net:
+    driver: bridge
