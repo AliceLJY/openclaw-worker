@@ -100,6 +100,28 @@ Simple. Secure. Works everywhere.
 - 📦 **Zero Dependencies**: Pure Node.js implementation
 - 🔌 **Auto-recovery**: Worker auto-restarts on wake from sleep (macOS)
 
+## My Setup (Example)
+
+Here's my actual working deployment for reference:
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **OpenClaw Gateway** | AWS EC2 (t4g.micro, us-east-2) | Discord bot, multi-channel orchestration |
+| **Task API (server.js)** | AWS EC2 (same instance) | Task queue for cloud bot |
+| **Worker (worker.js)** | MacBook Air M2 | Execute tasks, run Claude Code |
+| **Local Task API** | Mac (Docker) | Task queue for local bot |
+| **Claude Code** | Mac | Local AI with Max subscription |
+
+**Architecture:**
+```
+Discord Bot (AWS) ──► Task API (AWS:3456) ◄── Worker (Mac) ──► Claude Code
+Discord Bot (Docker) ──► Task API (Mac:3456) ◄── Worker (Mac) ──► Claude Code
+```
+
+Both bots share the same Mac worker and Claude Code subscription.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
