@@ -580,6 +580,17 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - Uses Claude Code with Max subscription (OAuth, not API) for local AI capabilities
 - Uses MiniMax API for OpenClaw's lightweight routing decisions
 
+## 📚 Advanced Guides
+
+Real-world patterns from production use:
+
+| Guide | Description |
+|-------|-------------|
+| [Multi-Persona Configuration](examples/multi-persona.md) | Configure different AI personalities for different Discord channels |
+| [Security Guide](docs/security-guide.md) | Defend against prompt injection when browsing external content |
+| [Cron Task Examples](examples/cron-tasks.md) | Schedule automated tasks: news curation, daily summaries, content patrol |
+| [Claude Code Integration](docs/claude-code-integration.md) | Best practices for invoking local Claude Code from your bot |
+
 ## Support
 
 - 📖 [Documentation](docs/)
