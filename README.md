@@ -98,7 +98,7 @@ Simple. Secure. Works everywhere.
   - Custom task types (extensible)
 - 🔄 **Long Polling**: Efficient task result retrieval with timeout support
 - 📦 **Zero Dependencies**: Pure Node.js implementation
-- 🔌 **Auto-recovery**: Worker auto-restarts on wake from sleep (macOS)
+- 🔌 **Auto-recovery**: Worker auto-starts on boot and auto-restarts on crash (macOS launchd)
 
 ## My Setup (Example)
 
@@ -334,22 +334,43 @@ WORKER_PORT=3456    # Server port
 
 ## Advanced Usage
 
-### Auto-start on Wake (macOS)
+### Auto-start on Boot (macOS launchd)
+
+Create `~/Library/LaunchAgents/com.openclaw.worker.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>sleep 30 &amp;&amp; cd ~/openclaw-worker &amp;&amp; WORKER_URL=xxx WORKER_TOKEN=xxx node worker.js</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/openclaw-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/openclaw-worker.err</string>
+</dict>
+</plist>
+```
+
+Then load it:
 
 ```bash
-# Install sleepwatcher
-brew install sleepwatcher
-
-# Create wake script
-cat > ~/.wakeup << 'EOF'
-#!/bin/bash
-screen -dmS worker bash -c 'cd ~/openclaw-worker && WORKER_URL=xxx WORKER_TOKEN=xxx node worker.js'
-EOF
-chmod +x ~/.wakeup
-
-# Enable sleepwatcher
-brew services start sleepwatcher
+launchctl load ~/Library/LaunchAgents/com.openclaw.worker.plist
 ```
+
+This ensures Worker starts on boot and auto-restarts on crash.
 
 ### Production Deployment
 

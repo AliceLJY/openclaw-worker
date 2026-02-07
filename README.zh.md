@@ -85,7 +85,7 @@ Worker:   "有！这是结果..."
   - 自定义任务类型（可扩展）
 - 🔄 **长轮询**：支持超时的高效任务结果获取
 - 📦 **零依赖**：纯 Node.js 实现
-- 🔌 **自动恢复**：从睡眠唤醒后 Worker 自动重启（macOS）
+- 🔌 **自动恢复**：开机自动启动，崩溃自动重启（macOS launchd）
 
 ## 快速开始
 
@@ -299,22 +299,43 @@ WORKER_PORT=3456    # 服务器端口
 
 ## 高级用法
 
-### macOS 唤醒自动启动
+### macOS 开机自动启动 (launchd)
+
+创建 `~/Library/LaunchAgents/com.openclaw.worker.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.worker</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>sleep 30 &amp;&amp; cd ~/openclaw-worker &amp;&amp; WORKER_URL=xxx WORKER_TOKEN=xxx node worker.js</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/openclaw-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/openclaw-worker.err</string>
+</dict>
+</plist>
+```
+
+然后加载：
 
 ```bash
-# 安装 sleepwatcher
-brew install sleepwatcher
-
-# 创建唤醒脚本
-cat > ~/.wakeup << 'EOF'
-#!/bin/bash
-screen -dmS worker bash -c 'cd ~/openclaw-worker && WORKER_URL=xxx WORKER_TOKEN=xxx node worker.js'
-EOF
-chmod +x ~/.wakeup
-
-# 启用 sleepwatcher
-brew services start sleepwatcher
+launchctl load ~/Library/LaunchAgents/com.openclaw.worker.plist
 ```
+
+这样可以确保 Worker 开机自动启动，崩溃后自动重启。
 
 ### 生产部署
 
