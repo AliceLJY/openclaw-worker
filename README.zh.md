@@ -545,6 +545,17 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 - 使用 Claude Code Max 订阅（OAuth 认证，非 API Key）提供本地 AI 能力
 - 使用 MiniMax API 供 OpenClaw 进行轻量级路由决策
 
+## 📚 进阶指南
+
+来自生产环境的实战经验：
+
+| 指南 | 描述 |
+|------|------|
+| [多人设配置](examples/multi-persona.md) | 为不同 Discord 频道配置不同的 AI 人格 |
+| [安全防御指南](docs/security-guide.md) | 浏览外部内容时防御 prompt 注入攻击 |
+| [定时任务示例](examples/cron-tasks.md) | 自动化任务调度：资讯整理、每日总结、内容巡逻 |
+| [Claude Code 集成](docs/claude-code-integration.md) | 从 Bot 调用本地 Claude Code 的最佳实践 |
+
 ## 支持
 
 - 📖 [文档](docs/)
