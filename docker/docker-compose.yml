@@ -34,11 +34,11 @@ services:
     networks:
       - openclaw-net
 
-  # Task API 服务（从你现有的 server.js 构建）
+  # Task API 服务（从根目录 server.js 构建）
   task-api:
     build:
-      context: ./task-api
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/task-api/Dockerfile
     container_name: openclaw-task-api
     restart: always
     ports:
