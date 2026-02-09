@@ -29,7 +29,7 @@ echo "  Starting Local Worker (Docker Local)"
 echo "=========================================="
 echo ""
 echo "Task API: http://localhost:3456"
-echo "Worker:   $PROJECT_ROOT/worker/worker.js"
+echo "Worker:   $PROJECT_ROOT/worker.js"
 echo ""
 
 # Start with login shell (for Keychain access)
@@ -38,7 +38,7 @@ screen -dmS worker bash -l -c "cd $PROJECT_ROOT && \
   WORKER_TOKEN=$WORKER_TOKEN \
   POLL_INTERVAL=500 \
   MAX_CONCURRENT=3 \
-  node worker/worker.js"
+  node worker.js"
 
 sleep 2
 
