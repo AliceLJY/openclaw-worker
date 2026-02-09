@@ -20,6 +20,10 @@ logs/
 *~
 .DS_Store
 
+# Backup files
+*.backup
+*.bak
+
 # Runtime data
 pids/
 *.pid

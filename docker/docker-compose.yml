@@ -8,7 +8,7 @@ services:
   openclaw-gateway:
     image: ghcr.io/openclaw/openclaw:latest
     container_name: openclaw-gateway
-    restart: unless-stopped
+    restart: always
     ports:
       - "18789:18789"  # Web UI
       - "18790:18790"  # Bridge
@@ -18,9 +18,19 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
+      # 代理配置已移除 - 内网代理 10.51.58.73 在外出时不可达
+      # 如需代理，请使用稳定的公网代理服务
+      # - HTTP_PROXY=http://your-stable-proxy:port
+      # - HTTPS_PROXY=http://your-stable-proxy:port
       # 不配置 Anthropic API，通过 Task API 调用外部 CC
     command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
     init: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18789/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - openclaw-net
 
@@ -30,7 +40,7 @@ services:
       context: ./task-api
       dockerfile: Dockerfile
     container_name: openclaw-task-api
-    restart: unless-stopped
+    restart: always
     ports:
       - "3456:3456"  # Task API 端口
     environment:
