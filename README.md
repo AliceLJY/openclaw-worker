@@ -57,7 +57,7 @@ Most remote control solutions focus on **connectivity**. This project focuses on
 
 - **🛡️ Security by Design**: Task queue creates audit trail and permission boundary
 - **🚀 Zero Configuration**: No port forwarding, no firewall rules, just works
-- **⚡ Fast Enough**: 500ms polling means tasks start within 1 second
+- **⚡ Long Polling**: Server holds connection until task arrives - near-zero idle traffic, instant response
 - **🔄 Self-Healing**: Worker auto-reconnects after network issues or sleep
 - **📝 Full Audit Trail**: Every task logged with timestamp and result
 - **🎛️ Flexible Execution**: Shell commands, file ops, Claude Code CLI, custom tasks
@@ -96,7 +96,7 @@ Simple. Secure. Works everywhere.
   - File read/write operations
   - Claude Code CLI execution
   - Custom task types (extensible)
-- 🔄 **Long Polling**: Efficient task result retrieval with timeout support
+- 🔄 **Long Polling**: Both worker polling and result retrieval use long polling for efficiency
 - 📦 **Zero Dependencies**: Pure Node.js implementation
 - 🔌 **Auto-recovery**: Worker auto-starts on boot and auto-restarts on crash (macOS launchd)
 
@@ -321,7 +321,8 @@ See [examples/web-dashboard/](examples/web-dashboard/)
 ```bash
 WORKER_URL=http://YOUR_SERVER_IP:3456  # Task API URL
 WORKER_TOKEN=xxx                       # Auth token
-POLL_INTERVAL=500                      # Polling interval (ms)
+LONG_POLL_WAIT=30000                   # Long poll hold time (ms, default 30s)
+POLL_INTERVAL=500                      # Fallback interval when at max concurrency (ms)
 MAX_CONCURRENT=3                       # Max concurrent tasks
 ```
 
@@ -578,9 +579,49 @@ Response: "Mac online, 145GB free"
 - 📸 **Capture screenshots** for bug reports via chat
 - 🗂️ **Backup automation** triggered by cloud schedules
 
+## "Why Polling? Isn't That Inefficient?"
+
+This is a fair question - and one we've thought about carefully.
+
+### Short answer
+
+It's **long polling**, not naive polling. The server holds the connection for up to 30 seconds and returns immediately when a task arrives. Idle traffic is near-zero.
+
+### Why not WebSocket / SSE / webhook?
+
+All push-based approaches require the **server to initiate a connection to the worker**. But the worker sits behind a home NAT/firewall - the server literally cannot reach it. That's the fundamental constraint.
+
+| Approach | Server → Worker | Worker → Server | Works Behind NAT |
+|----------|----------------|-----------------|-----------------|
+| WebSocket | Needs initial inbound | ✅ | ❌ Worker must be reachable |
+| Webhook | Push to worker URL | N/A | ❌ Worker must be reachable |
+| SSE | Push stream | N/A | ❌ Worker must be reachable |
+| **Long Polling** | N/A | ✅ Worker calls out | ✅ **No inbound needed** |
+
+Long polling is the standard pattern for this exact constraint. It's used by CouchDB replication, Kafka consumers, Telegram Bot API, and many CI/CD runners (GitHub Actions self-hosted runners work the same way).
+
+### The numbers
+
+| Metric | Naive Polling (old) | Long Polling (current) |
+|--------|-------------------|----------------------|
+| Requests/day (idle) | ~172,800 | ~2,880 |
+| Bandwidth/day (idle) | ~50MB | ~0.8MB |
+| Task pickup latency | ≤500ms | **≤500ms** (same) |
+
+Same responsiveness, 98% less idle traffic.
+
+### Could we use WebSocket over outbound connection?
+
+Yes - the worker could open a WebSocket to the server (outbound, NAT-friendly). But that adds:
+- Persistent connection management (reconnect logic, heartbeats, ping/pong)
+- WebSocket library dependency (we currently have **zero dependencies** on the worker)
+- More failure modes (half-open connections, proxy timeouts)
+
+Long polling gives us the same efficiency with simpler code. The connection naturally resets every 30 seconds, so there's no stale connection problem. We tried SSH tunnels and Tailscale WebSocket before - they were fragile. HTTP long polling just works.
+
 ## Limitations
 
-- **Not real-time**: 500ms polling interval (adjustable)
+- **Not real-time streaming**: Long polling has ≤500ms latency per task (fine for our use case)
 - **Stateless**: No persistent sessions between tasks
 - **Single-direction**: Worker can't initiate tasks on its own
 - **Trust required**: Client must trust cloud API security

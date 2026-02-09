@@ -90,8 +90,11 @@ app.get('/tasks/:taskId', auth, async (req, res) => {
   res.json({ status: task.status, message: 'Result not ready yet' });
 });
 
-// [本地 Worker 调用] 获取待执行任务
-app.get('/worker/poll', auth, (req, res) => {
+// [本地 Worker 调用] 获取待执行任务（长轮询）
+app.get('/worker/poll', auth, async (req, res) => {
+  const waitMs = Math.min(parseInt(req.query.wait) || 30000, 60000);
+
+  // 先立即检查一次
   for (const [taskId, task] of tasks) {
     if (task.status === 'pending') {
       task.status = 'running';
@@ -99,7 +102,21 @@ app.get('/worker/poll', auth, (req, res) => {
       return res.json(task);
     }
   }
-  res.json(null); // 没有任务
+
+  // 长轮询：hold 住连接，每 500ms 检查一次
+  const startTime = Date.now();
+  while (Date.now() - startTime < waitMs) {
+    await new Promise(r => setTimeout(r, 500));
+    for (const [taskId, task] of tasks) {
+      if (task.status === 'pending') {
+        task.status = 'running';
+        console.log(`[Worker] Picked up: ${taskId}`);
+        return res.json(task);
+      }
+    }
+  }
+
+  res.json(null); // 超时，没有任务
 });
 
 // [本地 Worker 调用] 上报结果

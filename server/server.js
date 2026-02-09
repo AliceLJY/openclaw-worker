@@ -94,8 +94,11 @@ app.get('/tasks/:taskId', auth, async (req, res) => {
   res.json({ status: task.status, message: 'Result not ready yet' });
 });
 
-// [Worker] Poll for pending tasks
-app.get('/worker/poll', auth, (req, res) => {
+// [Worker] Poll for pending tasks (long polling)
+app.get('/worker/poll', auth, async (req, res) => {
+  const waitMs = Math.min(parseInt(req.query.wait) || 30000, 60000);
+
+  // Check immediately first
   for (const [taskId, task] of tasks) {
     if (task.status === 'pending') {
       task.status = 'running';
@@ -103,7 +106,21 @@ app.get('/worker/poll', auth, (req, res) => {
       return res.json(task);
     }
   }
-  res.json(null); // No pending tasks
+
+  // Long poll: hold connection, check every 500ms
+  const startTime = Date.now();
+  while (Date.now() - startTime < waitMs) {
+    await new Promise(r => setTimeout(r, 500));
+    for (const [taskId, task] of tasks) {
+      if (task.status === 'pending') {
+        task.status = 'running';
+        console.log(`[Worker] Picked up: ${taskId}`);
+        return res.json(task);
+      }
+    }
+  }
+
+  res.json(null); // Timeout, no pending tasks
 });
 
 // [Worker] Report task result
