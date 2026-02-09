@@ -208,7 +208,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [Client] Execute Claude Code CLI on local machine
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000 } = req.body;
+  const { prompt, timeout = 120000, sessionId } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -220,14 +220,15 @@ app.post('/claude', auth, (req, res) => {
     type: 'claude-cli',
     prompt,
     timeout,
+    sessionId: sessionId || null,
     status: 'pending',
     createdAt: Date.now()
   };
 
   tasks.set(taskId, task);
-  console.log(`[Claude] Task: ${taskId} - ${prompt.slice(0, 50)}...`);
+  console.log(`[Claude] Task: ${taskId}${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
-  res.json({ taskId, message: 'Claude CLI task created' });
+  res.json({ taskId, sessionId: sessionId || null, message: 'Claude CLI task created' });
 });
 
 // ========== Task Cleanup ==========

@@ -185,14 +185,29 @@ function readFile(filePath) {
 
 // ========== Execute Claude Code CLI ==========
 const CLAUDE_PATH = '/opt/homebrew/bin/claude';
+const CC_LOG = '/tmp/cc-live.log';
+const ccSessions = new Set(); // Track active CC sessions
 
-function executeClaudeCLI(prompt, timeout) {
+function executeClaudeCLI(prompt, timeout, sessionId) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Claude CLI] Executing: "${prompt.slice(0, 50)}..."`);
+    console.log(`[Claude CLI] Executing: "${prompt.slice(0, 50)}..."${sessionId ? ' [session:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    // Use --dangerously-skip-permissions to bypass file access prompts (required for image recognition)
-    const shellCmd = `${CLAUDE_PATH} --print --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
+    // Build session flag: --resume for existing sessions, --session-id for new
+    let sessionFlag = '';
+    if (sessionId) {
+      if (ccSessions.has(sessionId)) {
+        sessionFlag = ` --resume "${sessionId}"`;
+      } else {
+        sessionFlag = ` --session-id "${sessionId}"`;
+        ccSessions.add(sessionId);
+      }
+    }
+
+    const shellCmd = `${CLAUDE_PATH} --print${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
+
+    // Write live log header
+    try { fs.appendFileSync(CC_LOG, `\n${'='.repeat(60)}\n[${new Date().toISOString()}] CC Start: ${prompt.slice(0, 80)}...\n${'='.repeat(60)}\n`); } catch (e) {}
 
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
       cwd: process.env.HOME,
@@ -209,7 +224,9 @@ function executeClaudeCLI(prompt, timeout) {
     let stderr = '';
 
     child.stdout.on('data', (data) => {
-      stdout += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      try { fs.appendFileSync(CC_LOG, chunk); } catch (e) {}
     });
 
     child.stderr.on('data', (data) => {
@@ -232,12 +249,26 @@ function executeClaudeCLI(prompt, timeout) {
       const duration = Date.now() - startTime;
       console.log(`[Claude CLI] Done in ${duration}ms, output ${stdout.length} bytes`);
 
+      // Write live log footer
+      try { fs.appendFileSync(CC_LOG, `\n[${new Date().toISOString()}] CC End (${duration}ms, exit ${code})\n`); } catch (e) {}
+
       // Detect screenshot marker for external tools (Discord bots, etc.)
       const screenshotMatch = stdout.match(/PLEASE_UPLOAD_TO_DISCORD:\s*(.+\.png)/);
       const screenshotPath = screenshotMatch ? screenshotMatch[1].trim() : null;
 
       if (screenshotPath) {
         console.log(`[Claude CLI] Screenshot detected: ${screenshotPath}`);
+      }
+
+      // Extract CC session ID from history for multi-turn tracking
+      let ccSessionId = sessionId || null;
+      if (!ccSessionId) {
+        try {
+          const historyPath = path.join(process.env.HOME, '.claude', 'history.jsonl');
+          const lines = fs.readFileSync(historyPath, 'utf8').trim().split('\n');
+          const lastEntry = JSON.parse(lines[lines.length - 1]);
+          ccSessionId = lastEntry.sessionId || null;
+        } catch (e) {}
       }
 
       const result = {
@@ -248,10 +279,11 @@ function executeClaudeCLI(prompt, timeout) {
         duration
       };
 
-      // Add screenshot path to metadata if detected
-      if (screenshotPath) {
-        result.metadata = { screenshotPath };
-      }
+      // Add metadata (screenshot, sessionId)
+      const metadata = {};
+      if (screenshotPath) metadata.screenshotPath = screenshotPath;
+      if (ccSessionId) metadata.sessionId = ccSessionId;
+      if (Object.keys(metadata).length > 0) result.metadata = metadata;
 
       resolve(result);
     });
@@ -288,7 +320,7 @@ async function executeTask(task) {
       result = await readFile(task.path);
     } else if (task.type === 'claude-cli') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
-      result = await executeClaudeCLI(task.prompt, task.timeout);
+      result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId);
     } else {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Command] ${taskId}... - ${task.command}`);
       result = await executeCommand(task.command, task.timeout);

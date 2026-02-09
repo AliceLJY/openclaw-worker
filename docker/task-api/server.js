@@ -204,7 +204,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 0 } = req.body;
+  const { prompt, timeout = 0, sessionId } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -216,14 +216,15 @@ app.post('/claude', auth, (req, res) => {
     type: 'claude-cli',
     prompt,
     timeout,
+    sessionId: sessionId || null,
     status: 'pending',
     createdAt: Date.now()
   };
 
   tasks.set(taskId, task);
-  console.log(`[Claude] Task: ${taskId} - ${prompt.slice(0, 50)}...`);
+  console.log(`[Claude] Task: ${taskId}${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
-  res.json({ taskId, message: 'Claude CLI task created' });
+  res.json({ taskId, sessionId: sessionId || null, message: 'Claude CLI task created' });
 });
 
 // ========== 清理过期任务 ==========
