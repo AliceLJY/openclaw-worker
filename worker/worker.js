@@ -19,7 +19,8 @@ const path = require('path');
 const CONFIG = {
   serverUrl: process.env.WORKER_URL || 'http://127.0.0.1:3456',
   token: process.env.WORKER_TOKEN || 'change-me-to-a-secure-token',
-  pollInterval: parseInt(process.env.POLL_INTERVAL) || 500,  // 500ms polling
+  pollInterval: parseInt(process.env.POLL_INTERVAL) || 500,  // Fallback interval (ms)
+  longPollWait: parseInt(process.env.LONG_POLL_WAIT) || 30000, // Long poll hold time (ms)
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,  // Max 3 concurrent tasks
   defaultTimeout: 120000, // 2 minutes (for Claude Code tasks)
 };
@@ -28,7 +29,7 @@ console.log('========================================');
 console.log('  OpenClaw Worker v1.0');
 console.log('========================================');
 console.log(`Server: ${CONFIG.serverUrl}`);
-console.log(`Poll interval: ${CONFIG.pollInterval}ms`);
+console.log(`Long poll wait: ${CONFIG.longPollWait}ms`);
 console.log(`Max concurrent: ${CONFIG.maxConcurrent} tasks`);
 console.log('');
 console.log('Supported task types:');
@@ -69,7 +70,9 @@ function request(method, path, body = null) {
     });
 
     req.on('error', reject);
-    req.setTimeout(10000, () => {
+    // Timeout must exceed long poll wait to avoid premature abort
+    const reqTimeout = path.includes('/worker/poll') ? CONFIG.longPollWait + 5000 : 10000;
+    req.setTimeout(reqTimeout, () => {
       req.destroy();
       reject(new Error('Request timeout'));
     });
@@ -327,7 +330,7 @@ async function pollAndExecute() {
         continue;
       }
 
-      const pollRes = await request('GET', '/worker/poll');
+      const pollRes = await request('GET', `/worker/poll?wait=${CONFIG.longPollWait}`);
 
       if (pollRes.status === 401) {
         console.error('[Error] Token authentication failed, check configuration');
@@ -339,7 +342,7 @@ async function pollAndExecute() {
       consecutiveErrors = 0;
 
       if (!task) {
-        await sleep(CONFIG.pollInterval);
+        // Server already held connection for longPollWait, retry immediately
         continue;
       }
 
