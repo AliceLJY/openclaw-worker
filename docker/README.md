@@ -113,23 +113,26 @@ screen -r worker
 ## 常用命令
 
 ```bash
-# 查看服务状态
-docker compose ps
+# 查看服务状态（需指定项目名区分 local 和 antigravity）
+docker compose -p openclaw-local ps
 
 # 查看日志
-docker compose logs -f                    # 所有服务
-docker compose logs -f openclaw-gateway   # 仅网关
-docker compose logs -f task-api           # 仅 Task API
+docker compose -p openclaw-local logs -f                    # 所有服务
+docker compose -p openclaw-local logs -f openclaw-gateway   # 仅网关
+docker compose -p openclaw-local logs -f task-api           # 仅 Task API
+docker compose -p openclaw-local logs -f autoheal           # Autoheal 日志
 
 # 重启服务
-docker compose restart
+docker compose -p openclaw-local restart
 
 # 停止服务
-docker compose down
+docker compose -p openclaw-local down
 
 # 完全清理（包括数据）
-docker compose down -v
+docker compose -p openclaw-local down -v
 ```
+
+> **注意**：如果同目录下有多个 compose 文件（如 antigravity），必须用 `-p` 指定项目名，否则会互相覆盖。
 
 ---
 
@@ -194,6 +197,27 @@ claude login
 
 确保 VPN 已开启，Discord 需要翻墙。
 
+### 5. WiFi 断线后 Bot 自动恢复（Autoheal）
+
+Gateway 容器配置了 autoheal 自动恢复机制：
+
+- **健康检查**：双重检测 — HTTP `/health` API 可达 **且** 当天日志包含 `logged in to discord`
+- **自动重启**：autoheal 容器每 30 秒检查一次，连续 3 次不健康则自动重启 gateway
+- **启动等待**：start_period 90 秒，给 Discord 登录留够时间
+
+```bash
+# 查看健康状态
+docker inspect --format='{{.State.Health.Status}}' openclaw-gateway
+
+# 查看 autoheal 日志
+docker logs autoheal-gateway --tail 20
+
+# 手动触发重启（如果自动恢复失败）
+docker restart openclaw-gateway
+```
+
+**已知问题**：WiFi 恢复后如果 DNS 还没通，autoheal 可能重启太早导致 Discord 登录失败。通常等 1-2 分钟会自动再试成功。如果持续失败，检查 Discord 是否有频率限制（rate limit）。
+
 ---
 
 ## 与云端方案并存
@@ -213,3 +237,4 @@ claude login
 2. **权限分离**：CC 权限在 Worker，不在 Docker 内
 3. **Token 保护**：`.env` 文件包含敏感 Token，不要提交到 Git
 4. **本地网络**：所有通信都在 localhost，不暴露到公网
+5. **Autoheal**：Gateway 容器配有自动恢复，WiFi 断线后无需手动干预
