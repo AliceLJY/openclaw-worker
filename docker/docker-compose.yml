@@ -45,6 +45,8 @@ services:
     restart: always
     ports:
       - "3456:3456"  # Task API 端口
+    volumes:
+      - ../server.js:/app/server.js:ro  # 热补丁：修复清理逻辑 bug
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
       - PORT=3456

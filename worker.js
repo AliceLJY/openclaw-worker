@@ -27,6 +27,9 @@ const CONFIG = {
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,
   // 命令执行超时（毫秒）- 改为5分钟，适配Claude AI任务和content-alchemy skill
   defaultTimeout: 300000,
+  // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
+  openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
+  openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
 };
 
 console.log('========================================');
@@ -312,6 +315,38 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
   });
 }
 
+// ========== OpenClaw CLI 回调（直接发 Discord 消息，不经过 agent） ==========
+function notifyOpenClaw(task, result) {
+  // 只对 claude-cli 任务回调，且需要有 callbackChannel
+  if (task.type !== 'claude-cli' || !task.callbackChannel) return;
+
+  const summary = (result.stdout || '').slice(-1500) || '(无输出)';
+  const status = result.exitCode === 0 ? '完成' : '失败';
+  const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
+
+  // 包含 sessionId 供分段多轮对话使用
+  const sessionId = result.metadata?.sessionId;
+  const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId}\`` : '';
+
+  const message = `**CC 任务${status}**（耗时 ${duration}）${sessionInfo}\n\n${summary}`;
+
+  // 用 execFile 避免 shell 注入，通过 docker exec 调用 OpenClaw CLI
+  const { execFile } = require('child_process');
+  execFile('docker', [
+    'exec', 'openclaw-antigravity',
+    'node', 'openclaw.mjs', 'message', 'send',
+    '--channel', 'discord',
+    '--target', `channel:${task.callbackChannel}`,
+    '-m', message
+  ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`[回调] OpenClaw CLI 发送失败: ${error.message}`);
+    } else {
+      console.log(`[回调] 已推送到 Discord 频道 ${task.callbackChannel}`);
+    }
+  });
+}
+
 // ========== 并发任务管理 ==========
 let isRunning = true;
 let consecutiveErrors = 0;
@@ -346,6 +381,9 @@ async function executeTask(task) {
       taskId: task.id,
       ...result
     });
+
+    // CC 任务完成后回调通知 OpenClaw bot
+    notifyOpenClaw(task, result);
 
     const status = result.exitCode === 0 ? '✓' : '✗';
     console.log(`[完成] ${status} ${taskId}... (剩余: ${runningTasks.size - 1})`);
