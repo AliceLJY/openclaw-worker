@@ -247,6 +247,8 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
       stderr += data.toString();
     });
 
+    // 加 30 秒缓冲：CC 完成时有一小段收尾时间（写文件、输出结果）
+    const effectiveTimeout = (timeout || CONFIG.defaultTimeout) + 30000;
     const timer = setTimeout(() => {
       child.kill();
       resolve({
@@ -256,7 +258,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
         error: 'Timeout',
         duration: Date.now() - startTime
       });
-    }, timeout || CONFIG.defaultTimeout);
+    }, effectiveTimeout);
 
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -331,20 +333,34 @@ function notifyOpenClaw(task, result) {
   const message = `**CC 任务${status}**（耗时 ${duration}）${sessionInfo}\n\n${summary}`;
 
   // 用 execFile 避免 shell 注入，通过 docker exec 调用 OpenClaw CLI
+  // 带重试：bot 容器可能刚好在重启
   const { execFile } = require('child_process');
-  execFile('docker', [
-    'exec', 'openclaw-antigravity',
-    'node', 'openclaw.mjs', 'message', 'send',
-    '--channel', 'discord',
-    '--target', `channel:${task.callbackChannel}`,
-    '-m', message
-  ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`[回调] OpenClaw CLI 发送失败: ${error.message}`);
-    } else {
-      console.log(`[回调] 已推送到 Discord 频道 ${task.callbackChannel}`);
-    }
-  });
+  const maxRetries = 3;
+  let attempt = 0;
+
+  function trySend() {
+    attempt++;
+    execFile('docker', [
+      'exec', 'openclaw-antigravity',
+      'node', 'openclaw.mjs', 'message', 'send',
+      '--channel', 'discord',
+      '--target', `channel:${task.callbackChannel}`,
+      '-m', message
+    ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        if (attempt < maxRetries) {
+          console.error(`[回调] 第${attempt}次发送失败，${5}s 后重试: ${error.message.slice(0, 100)}`);
+          setTimeout(trySend, 5000);
+        } else {
+          console.error(`[回调] ${maxRetries}次均失败: ${error.message.slice(0, 200)}`);
+        }
+      } else {
+        console.log(`[回调] 已推送到 Discord 频道 ${task.callbackChannel}`);
+      }
+    });
+  }
+
+  trySend();
 }
 
 // ========== 并发任务管理 ==========
