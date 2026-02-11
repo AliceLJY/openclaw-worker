@@ -14,6 +14,8 @@ services:
     volumes:
       - ~/.openclaw-antigravity:/home/node/.openclaw
       - ~/openclaw-workspace:/home/node/workspace
+      # Patch: strip unsigned thinking blocks to fix Antigravity Claude multi-turn error
+      - ~/.openclaw-antigravity/patches/messages.js:/app/node_modules/@mariozechner/pi-coding-agent/dist/core/messages.js:ro
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_ANTIGRAVITY_TOKEN:-antigravity-bot-token}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
