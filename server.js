@@ -204,7 +204,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -217,12 +217,13 @@ app.post('/claude', auth, (req, res) => {
     prompt,
     timeout,
     sessionId: sessionId || null,
+    callbackChannel: callbackChannel || null,
     status: 'pending',
     createdAt: Date.now()
   };
 
   tasks.set(taskId, task);
-  console.log(`[Claude] Task: ${taskId}${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  console.log(`[Claude] Task: ${taskId}${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
   res.json({ taskId, sessionId: sessionId || null, message: 'Claude CLI task created' });
 });
@@ -230,13 +231,22 @@ app.post('/claude', auth, (req, res) => {
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
-  const EXPIRE_MS = 5 * 60 * 1000; // 5 分钟过期
+  const TASK_EXPIRE_MS = 15 * 60 * 1000; // 未完成任务 15 分钟过期
+  const RESULT_EXPIRE_MS = 30 * 60 * 1000; // 已完成结果保留 30 分钟
 
   for (const [taskId, task] of tasks) {
-    if (now - task.createdAt > EXPIRE_MS) {
+    const age = now - task.createdAt;
+    if (results.has(taskId)) {
+      // 有结果但未被取走：保留更久
+      if (age > RESULT_EXPIRE_MS) {
+        tasks.delete(taskId);
+        results.delete(taskId);
+        console.log(`[Cleanup] Result expired (unfetched): ${taskId}`);
+      }
+    } else if (age > TASK_EXPIRE_MS) {
+      // 无结果的过期任务（卡住或超时）
       tasks.delete(taskId);
-      results.delete(taskId);
-      console.log(`[Cleanup] Expired: ${taskId}`);
+      console.log(`[Cleanup] Task expired (no result): ${taskId}`);
     }
   }
 }, 60000);
