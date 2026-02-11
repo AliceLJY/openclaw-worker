@@ -211,21 +211,24 @@ app.post('/claude', auth, (req, res) => {
   }
 
   const taskId = crypto.randomUUID();
+  // 自动生成 sessionId：确保每轮 CC 都有可追踪的 session，支持后续 --resume
+  const effectiveSessionId = sessionId || crypto.randomUUID();
   const task = {
     id: taskId,
     type: 'claude-cli',
     prompt,
     timeout,
-    sessionId: sessionId || null,
+    sessionId: effectiveSessionId,
     callbackChannel: callbackChannel || null,
     status: 'pending',
     createdAt: Date.now()
   };
 
   tasks.set(taskId, task);
-  console.log(`[Claude] Task: ${taskId}${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  const isResume = !!sessionId;
+  console.log(`[Claude] Task: ${taskId} [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
-  res.json({ taskId, sessionId: sessionId || null, message: 'Claude CLI task created' });
+  res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
 
 // ========== 清理过期任务 ==========
