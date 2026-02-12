@@ -21,6 +21,20 @@
 
 ---
 
+## AI-Assisted Setup
+
+Install the setup wizard skill for [Claude Code](https://docs.anthropic.com/en/docs/claude-code):
+
+```bash
+cd ~/.claude/skills && git clone https://github.com/AliceLJY/openclaw-worker
+```
+
+Then invoke the skill in Claude Code to get interactive deployment guidance. The wizard walks you through environment assessment, deployment mode selection (Docker local / cloud / bare metal), Task API and Worker configuration, security setup, and verification -- all with AI guidance tailored to your environment.
+
+> **中文说明**：安装部署向导 Skill 后，在 Claude Code 中调用即可获得交互式部署指引。向导会根据你的环境自动检测依赖、生成配置、启动服务并验证连接，支持 Docker 本地、云端、裸机三种部署模式。
+
+---
+
 ## The Problem It Solves
 
 Modern AI agents like OpenClaw are incredibly powerful but require extensive local permissions (file access, system commands, hardware control). Running them locally with full permissions is convenient but **risky** - one compromised prompt could expose your entire computer.
