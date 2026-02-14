@@ -145,4 +145,4 @@ Or with Anthropic models:
 
 ---
 
-*This configuration pattern is battle-tested with MiniMax M2.1 and works with any OpenAI-compatible API.*
+*This configuration pattern is battle-tested with MiniMax M2.5 / Gemini Pro 3 and works with any OpenAI-compatible API.*

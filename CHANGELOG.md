@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **云端服务器**：从腾讯云迁移到 AWS EC2
 - **自动启动方案**：从 sleepwatcher（唤醒启动）改为 launchd（开机启动 + 崩溃重启）
-- **云端 AI 模型**：云端不再运行 Claude Code，改用 Kimi K2.5（节省内存）
+- **云端 AI 模型**：云端不再运行 Claude Code，改用 MiniMax M2.5（节省内存，原 Kimi K2.5 已替换）
 
 ### Added
 - **进阶指南**：
