@@ -13,7 +13,7 @@
 
 | 组件 | 位置 | 技术栈 | 作用 |
 |------|------|--------|------|
-| Discord Bot | 云端 AWS | OpenClaw + Kimi K2.5 | 用户入口，消息处理 |
+| Discord Bot | 云端 AWS | OpenClaw + MiniMax M2.5 | 用户入口，消息处理 |
 | Task API | 云端/本地 | Node.js/Express | 任务队列，转发到本地 |
 | Worker | 本地 Mac | Node.js | 轮询任务，调用本地资源 |
 | 本地 CC | 本地 Mac | Claude Code CLI (Max 订阅, OAuth) | AI 任务执行 |
@@ -26,7 +26,7 @@
 ### 部署
 - 服务器：**AWS EC2**（海外服务器，可连接 Discord）
 - 安装：官方一键脚本
-- 配置：**Kimi K2.5**（用于 Bot 对话和路由决策）
+- 配置：**MiniMax M2.5**（用于 Bot 对话和路由决策）
 - 注意：云端**不运行 Claude Code**（节省内存），复杂任务通过 Task API 转发到本地
 
 ### 关键配置文件
@@ -38,7 +38,7 @@
 
 ### 为什么不用云端 Claude Code？
 - 云端服务器内存有限
-- Kimi K2.5 足够处理日常对话和路由
+- MiniMax M2.5 足够处理日常对话和路由
 - 复杂任务（写文章、生成图片）转发到本地 Mac 执行
 
 ---
@@ -48,7 +48,7 @@
 ### 功能
 - 接收用户消息
 - 根据频道切换人设（#mean 毒舌、#chat 贴心...）
-- 简单任务直接用 Kimi K2.5 回复
+- 简单任务直接用 MiniMax M2.5 回复
 - 复杂任务调度到 Task API → 本地 Claude Code
 
 ### 记忆配置
@@ -181,7 +181,7 @@ WORKER_URL=http://YOUR_AWS_IP:3456
 ```
 用户发消息 → Discord → AWS OpenClaw Bot
                               │
-                              ├─ 简单问题 → Kimi K2.5 直接回复
+                              ├─ 简单问题 → MiniMax M2.5 直接回复
                               │
                               └─ 复杂任务 → Task API
                                               │
@@ -278,4 +278,4 @@ brew uninstall sleepwatcher
 
 ---
 
-*最后更新：2026-02-07*
+*最后更新：2026-02-14*
