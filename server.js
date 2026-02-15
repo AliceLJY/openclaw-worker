@@ -13,6 +13,12 @@ app.use(express.json());
 const AUTH_TOKEN = process.env.WORKER_TOKEN || 'change-me-to-a-secure-token';
 const PORT = process.env.WORKER_PORT || 3456;
 
+// Callback: push CC results to Discord via OpenClaw CLI
+// Docker mode (Mac): CALLBACK_CONTAINER=openclaw-antigravity
+// Native mode (AWS): CALLBACK_CLI=/path/to/openclaw.mjs
+const CALLBACK_CONTAINER = process.env.CALLBACK_CONTAINER || '';
+const CALLBACK_CLI = process.env.CALLBACK_CLI || '';
+
 // ========== 内存任务队列 ==========
 const tasks = new Map();      // taskId -> task
 const results = new Map();    // taskId -> result
@@ -147,7 +153,14 @@ app.post('/worker/result', auth, (req, res) => {
     console.log(`[Worker] Screenshot: ${metadata.screenshotPath}`);
   }
 
-  res.json({ success: true });
+  // Server-side callback: push result to Discord if configured
+  let callbackHandled = false;
+  const task = tasks.get(taskId);
+  if (task) {
+    callbackHandled = notifyCallback(task, result);
+  }
+
+  res.json({ success: true, callbackHandled });
 });
 
 // ========== 文件写入 API（绕过 shell 转义问题） ==========
@@ -230,6 +243,57 @@ app.post('/claude', auth, (req, res) => {
 
   res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
+
+// ========== 服务端回调（推送 CC 结果到 Discord） ==========
+function notifyCallback(task, result) {
+  if (task.type !== 'claude-cli' || !task.callbackChannel) return false;
+  if (!CALLBACK_CLI && !CALLBACK_CONTAINER) return false;
+
+  const summary = (result.stdout || '').slice(-1500) || '(无输出)';
+  const status = result.exitCode === 0 ? '完成' : '失败';
+  const duration = result.completedAt && task.createdAt
+    ? `${Math.round((result.completedAt - task.createdAt) / 1000)}s` : '未知';
+  const sessionId = result.metadata?.sessionId || task.sessionId;
+  const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId}\`` : '';
+  const message = `**CC 任务${status}**（耗时 ${duration}）${sessionInfo}\n\n${summary}`;
+
+  const { execFile } = require('child_process');
+  const maxRetries = 3;
+  let attempt = 0;
+
+  function trySend() {
+    attempt++;
+    let cmd, args;
+
+    if (CALLBACK_CONTAINER) {
+      // Docker mode: docker exec <container> node openclaw.mjs message send ...
+      cmd = 'docker';
+      args = ['exec', CALLBACK_CONTAINER, 'node', 'openclaw.mjs', 'message', 'send',
+        '--channel', 'discord', '--target', `channel:${task.callbackChannel}`, '-m', message];
+    } else {
+      // Native CLI mode: node <path/to/openclaw.mjs> message send ...
+      cmd = 'node';
+      args = [CALLBACK_CLI, 'message', 'send',
+        '--channel', 'discord', '--target', `channel:${task.callbackChannel}`, '-m', message];
+    }
+
+    execFile(cmd, args, { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error) => {
+      if (error) {
+        if (attempt < maxRetries) {
+          console.error(`[Callback] Attempt ${attempt} failed, retry in 5s: ${error.message.slice(0, 100)}`);
+          setTimeout(trySend, 5000);
+        } else {
+          console.error(`[Callback] All ${maxRetries} attempts failed: ${error.message.slice(0, 200)}`);
+        }
+      } else {
+        console.log(`[Callback] Sent to Discord channel ${task.callbackChannel}`);
+      }
+    });
+  }
+
+  trySend();
+  return true;
+}
 
 // ========== 清理过期任务 ==========
 setInterval(() => {
