@@ -130,9 +130,10 @@ Here's my actual working deployment for reference:
 ```
 Discord Bot (AWS) ──► Task API (AWS:3456) ◄── Worker (Mac) ──► Claude Code
 Discord Bot (Docker) ──► Task API (Mac:3456) ◄── Worker (Mac) ──► Claude Code
+                  ◄──────────────────────────── Worker callback (docker exec)
 ```
 
-Both bots share the same Mac worker and Claude Code subscription.
+Both bots share the same Mac worker and Claude Code subscription. After Claude Code tasks complete, the Worker pushes results back to Discord via `docker exec` callback (see [Callback Notification](#callback-notification-claude-code-tasks)).
 
 ---
 
@@ -225,6 +226,34 @@ curl "http://YOUR_SERVER_IP:3456/tasks/abc-123?wait=30000" \
 4. Worker reports result → Task API stores result
 5. Client retrieves result → Long polling with timeout
 ```
+
+### Callback Notification (Claude Code Tasks)
+
+For `claude-cli` tasks, the Worker does more than just report results to the Task API. It also **pushes a notification directly to a Discord channel** so the Bot (and the user) get instant feedback without polling.
+
+```
+Worker finishes CC task
+    │
+    ├──► Task API (/worker/result)       ← standard result storage
+    │
+    └──► docker exec openclaw-antigravity ← direct Discord notification
+         node openclaw.mjs message send
+         --channel discord
+         --target channel:<callbackChannel>
+         -m "CC 任务完成 (236s) ..."
+```
+
+> Worker 完成 CC 任务后，除了上报 Task API，还会通过 `docker exec` 调用 OpenClaw CLI 直接推送结果到 Discord 频道，用户无需轮询即可收到通知。
+
+**How it works:**
+
+- The client includes a `callbackChannel` (Discord channel ID) when submitting a `/claude` task.
+- After execution, the Worker calls `docker exec` on the OpenClaw Bot container to send results via the OpenClaw CLI.
+- The callback message includes task status, duration, `sessionId` (for multi-turn continuation), and the last 1500 characters of output.
+- Built-in retry: 3 attempts with 5-second intervals, in case the Bot container is temporarily unavailable.
+- Only triggers for `claude-cli` tasks with a `callbackChannel` — shell commands and file operations are not affected.
+
+For the full multi-turn orchestration protocol (how the Bot uses `sessionId` to chain multiple rounds of CC execution), see [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline).
 
 ### Security Model
 
@@ -648,6 +677,14 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
+## Related Projects
+
+| Project | Description |
+|---------|-------------|
+| [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Multi-turn Claude Code orchestration skill — uses this Worker's Task API + callback to chain multiple rounds of CC execution with human-in-the-loop review |
+| [content-alchemy](https://github.com/AliceLJY/content-alchemy) | WeChat article writing skill — the primary real-world use case driven through this Worker |
+| [OpenClaw](https://github.com/openclaw/openclaw) | The Discord Bot framework that dispatches tasks to this Worker |
+
 ## Acknowledgments
 
 - Built for the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem - a powerful AI agent framework
@@ -665,7 +702,8 @@ Real-world patterns from production use:
 | [Multi-Persona Configuration](examples/multi-persona.md) | Configure different AI personalities for different Discord channels |
 | [Security Guide](docs/security-guide.md) | Defend against prompt injection when browsing external content |
 | [Cron Task Examples](examples/cron-tasks.md) | Schedule automated tasks: news curation, daily summaries, content patrol |
-| [Claude Code Integration](docs/claude-code-integration.md) | Best practices for invoking local Claude Code from your bot |
+| [Claude Code Integration](docs/claude-code-integration.md) | Best practices for invoking local Claude Code from your bot, including callback delivery |
+| [Multi-Turn CC Pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Chain multiple rounds of Claude Code execution with human-in-the-loop review (separate repo) |
 
 ## Support
 

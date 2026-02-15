@@ -257,4 +257,48 @@ if (data.exitCode === 0) {
 
 ---
 
+## Callback Delivery
+
+After a Claude Code task completes, the Worker doesn't just store the result in the Task API — it also **pushes a notification directly to Discord** via the OpenClaw CLI.
+
+### How It Works
+
+```
+CC task completes
+    ↓
+Worker reports result to Task API          (storage)
+    ↓
+Worker runs: docker exec openclaw-antigravity
+  node openclaw.mjs message send
+  --channel discord
+  --target channel:<callbackChannel>       (push notification)
+```
+
+The callback message includes:
+- **Status**: success or failure
+- **Duration**: how long the task took
+- **sessionId**: for multi-turn continuation (the Bot extracts this to chain rounds)
+- **Output**: last 1500 characters of CC stdout
+
+### Enabling Callbacks
+
+Include `callbackChannel` in your `/claude` request:
+
+```json
+POST /claude
+{
+  "prompt": "Write an article about...",
+  "callbackChannel": "1234567890",
+  "timeout": 600000
+}
+```
+
+Without `callbackChannel`, no notification is sent — results are only available via `GET /tasks/:id`.
+
+### Multi-Turn Orchestration
+
+For chaining multiple rounds of CC execution (e.g., the 3-round Content Alchemy workflow), see [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline). That skill defines the full protocol: how the Bot extracts `sessionId` from callbacks, collects user feedback, and dispatches subsequent rounds with `--resume`.
+
+---
+
 *The key insight: Your bot is an orchestrator, not a writer. Let Claude Code do the heavy lifting.*
