@@ -27,9 +27,6 @@ const CONFIG = {
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,
   // 命令执行超时（毫秒）- 改为5分钟，适配Claude AI任务和content-alchemy skill
   defaultTimeout: 300000,
-  // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
-  openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
-  openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
 };
 
 console.log('========================================');
