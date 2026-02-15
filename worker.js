@@ -390,13 +390,17 @@ async function executeTask(task) {
     }
 
     // 上报结果
-    await request('POST', '/worker/result', {
+    const reportRes = await request('POST', '/worker/result', {
       taskId: task.id,
       ...result
     });
 
-    // CC 任务完成后回调通知 OpenClaw bot
-    notifyOpenClaw(task, result);
+    // CC 任务完成后回调通知 OpenClaw bot（跳过如果服务端已处理）
+    if (reportRes.data?.callbackHandled) {
+      console.log(`[回调] 服务端已处理，跳过 Worker 回调`);
+    } else {
+      notifyOpenClaw(task, result);
+    }
 
     const status = result.exitCode === 0 ? '✓' : '✗';
     console.log(`[完成] ${status} ${taskId}... (剩余: ${runningTasks.size - 1})`);
