@@ -712,6 +712,12 @@ Real-world patterns from production use:
 - 🐛 [Issue Tracker](https://github.com/AliceLJY/openclaw-worker/issues)
 - 💬 [Discussions](https://github.com/AliceLJY/openclaw-worker/discussions)
 
----
+## Author
 
-Made with ☕ by [@AliceLJY](https://github.com/AliceLJY)
+Built by **小试AI** ([@AliceLJY](https://github.com/AliceLJY)) · WeChat Official Account: **我的AI小木屋**
+
+> 医学出身，文化口工作，AI 野路子。公众号四大板块：AI实操手账 · AI踩坑实录 · AI照见众生 · AI随心分享
+
+Four content pillars: **Hands-on AI** · **AI Pitfall Diaries** · **AI & Humanity** · **AI Gallery**
+
+Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline)
