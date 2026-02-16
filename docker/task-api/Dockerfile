@@ -3,6 +3,9 @@
 
 FROM node:22-alpine
 
+# Install Docker CLI for callback (docker exec into bot containers)
+RUN apk add --no-cache docker-cli
+
 WORKDIR /app
 
 # 安装依赖（用 Docker 专用的精简 package.json）

@@ -217,7 +217,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId, callbackChannel } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackContainer } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -233,6 +233,7 @@ app.post('/claude', auth, (req, res) => {
     timeout,
     sessionId: effectiveSessionId,
     callbackChannel: callbackChannel || null,
+    callbackContainer: callbackContainer || null,
     status: 'pending',
     createdAt: Date.now()
   };
@@ -247,7 +248,9 @@ app.post('/claude', auth, (req, res) => {
 // ========== 服务端回调（推送 CC 结果到 Discord） ==========
 function notifyCallback(task, result) {
   if (task.type !== 'claude-cli' || !task.callbackChannel) return false;
-  if (!CALLBACK_CLI && !CALLBACK_CONTAINER) return false;
+  // Per-request container overrides global env var
+  const effectiveContainer = task.callbackContainer || CALLBACK_CONTAINER;
+  if (!CALLBACK_CLI && !effectiveContainer) return false;
 
   const summary = (result.stdout || '').slice(-1500) || '(无输出)';
   const status = result.exitCode === 0 ? '完成' : '失败';
@@ -265,10 +268,10 @@ function notifyCallback(task, result) {
     attempt++;
     let cmd, args;
 
-    if (CALLBACK_CONTAINER) {
+    if (effectiveContainer) {
       // Docker mode: docker exec <container> node openclaw.mjs message send ...
       cmd = 'docker';
-      args = ['exec', CALLBACK_CONTAINER, 'node', 'openclaw.mjs', 'message', 'send',
+      args = ['exec', effectiveContainer, 'node', 'openclaw.mjs', 'message', 'send',
         '--channel', 'discord', '--target', `channel:${task.callbackChannel}`, '-m', message];
     } else {
       // Native CLI mode: node <path/to/openclaw.mjs> message send ...
