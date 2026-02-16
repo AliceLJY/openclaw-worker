@@ -118,13 +118,14 @@ Simple. Secure. Works everywhere.
 
 Here's my actual working deployment for reference:
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **OpenClaw Gateway** | AWS EC2 (t4g.micro, us-east-2) | Discord bot, multi-channel orchestration |
-| **Task API (server.js)** | AWS EC2 (same instance) | Task queue for cloud bot |
-| **Worker (worker.js)** | MacBook Air M4 | Execute tasks, run Claude Code |
-| **Local Task API** | Mac (Docker) | Task queue for local bot |
-| **Claude Code** | Mac | Local AI with Max subscription |
+| Component | Location | Model / Stack | Purpose |
+|-----------|----------|---------------|---------|
+| **OpenClaw Gateway** | AWS EC2 (t4g.micro, us-east-2) | MiniMax M2.5 | Discord bot, multi-channel orchestration |
+| **AntiBot** | Mac (Docker) | Claude Opus 4.6 | Deep thinking, article writing, code review |
+| **睿智bot** | Mac (Docker) | Gemini Pro 3 | Creative work, backup publishing |
+| **Task API (server.js)** | AWS EC2 + Mac (Docker) | Node.js | Task queue (cloud + local) |
+| **Worker (worker.js)** | MacBook Air M4, 16GB | Node.js | Execute tasks, run Claude Code |
+| **Claude Code** | Mac | Opus 4.6 (Max subscription) | Local AI executor engine |
 
 **Architecture:**
 ```
