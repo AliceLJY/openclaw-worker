@@ -122,7 +122,7 @@ Here's my actual working deployment for reference:
 |-----------|----------|---------|
 | **OpenClaw Gateway** | AWS EC2 (t4g.micro, us-east-2) | Discord bot, multi-channel orchestration |
 | **Task API (server.js)** | AWS EC2 (same instance) | Task queue for cloud bot |
-| **Worker (worker.js)** | MacBook Air M2 | Execute tasks, run Claude Code |
+| **Worker (worker.js)** | MacBook Air M4 | Execute tasks, run Claude Code |
 | **Local Task API** | Mac (Docker) | Task queue for local bot |
 | **Claude Code** | Mac | Local AI with Max subscription |
 
