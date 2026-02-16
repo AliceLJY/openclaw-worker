@@ -47,9 +47,11 @@ services:
       - "3456:3456"  # Task API 端口
     volumes:
       - ../server.js:/app/server.js:ro  # 热补丁：修复清理逻辑 bug
+      - /var/run/docker.sock:/var/run/docker.sock  # Callback: docker exec into bot containers
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
       - PORT=3456
+      - CALLBACK_CONTAINER=openclaw-gateway  # Default: 睿智bot; per-request callbackContainer overrides
     networks:
       - openclaw-net
 
