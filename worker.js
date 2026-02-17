@@ -335,13 +335,16 @@ function notifyOpenClaw(task, result) {
   const maxRetries = 3;
   let attempt = 0;
 
+  const platform = task.callbackPlatform || 'discord';
+  const target = platform === 'telegram' ? task.callbackChannel : `channel:${task.callbackChannel}`;
+
   function trySend() {
     attempt++;
     execFile('docker', [
       'exec', 'openclaw-antigravity',
       'node', 'openclaw.mjs', 'message', 'send',
-      '--channel', 'discord',
-      '--target', `channel:${task.callbackChannel}`,
+      '--channel', platform,
+      '--target', target,
       '-m', message
     ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
@@ -352,7 +355,7 @@ function notifyOpenClaw(task, result) {
           console.error(`[回调] ${maxRetries}次均失败: ${error.message.slice(0, 200)}`);
         }
       } else {
-        console.log(`[回调] 已推送到 Discord 频道 ${task.callbackChannel}`);
+        console.log(`[回调] 已推送到 ${platform} ${target}`);
       }
     });
   }
