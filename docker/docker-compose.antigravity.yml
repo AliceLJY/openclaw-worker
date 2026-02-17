@@ -21,10 +21,11 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_ANTIGRAVITY_TOKEN:-antigravity-bot-token}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
+      # Telegram 代理已在 openclaw.json channels.telegram.proxy 配置，不需要全局代理
     command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
     init: true
     healthcheck:
-      test: ["CMD", "sh", "-c", "node -e \"fetch('http://127.0.0.1:18789/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" && grep -q 'logged in to discord' /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log"]
+      test: ["CMD", "sh", "-c", "node -e \"fetch('http://127.0.0.1:18789/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" && grep -q 'logged in to discord' /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log && grep -q 'starting provider (@Strong_model_bot)' /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log"]
       interval: 60s
       timeout: 15s
       retries: 3

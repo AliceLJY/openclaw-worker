@@ -217,7 +217,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackContainer } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackContainer, callbackPlatform } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -234,6 +234,7 @@ app.post('/claude', auth, (req, res) => {
     sessionId: effectiveSessionId,
     callbackChannel: callbackChannel || null,
     callbackContainer: callbackContainer || null,
+    callbackPlatform: callbackPlatform || 'discord',
     status: 'pending',
     createdAt: Date.now()
   };
@@ -268,16 +269,19 @@ function notifyCallback(task, result) {
     attempt++;
     let cmd, args;
 
+    const platform = task.callbackPlatform || 'discord';
+    const target = platform === 'telegram' ? task.callbackChannel : `channel:${task.callbackChannel}`;
+
     if (effectiveContainer) {
       // Docker mode: docker exec <container> node openclaw.mjs message send ...
       cmd = 'docker';
       args = ['exec', effectiveContainer, 'node', 'openclaw.mjs', 'message', 'send',
-        '--channel', 'discord', '--target', `channel:${task.callbackChannel}`, '-m', message];
+        '--channel', platform, '--target', target, '-m', message];
     } else {
       // Native CLI mode: node <path/to/openclaw.mjs> message send ...
       cmd = 'node';
       args = [CALLBACK_CLI, 'message', 'send',
-        '--channel', 'discord', '--target', `channel:${task.callbackChannel}`, '-m', message];
+        '--channel', platform, '--target', target, '-m', message];
     }
 
     execFile(cmd, args, { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error) => {
@@ -289,7 +293,7 @@ function notifyCallback(task, result) {
           console.error(`[Callback] All ${maxRetries} attempts failed: ${error.message.slice(0, 200)}`);
         }
       } else {
-        console.log(`[Callback] Sent to Discord channel ${task.callbackChannel}`);
+        console.log(`[Callback] Sent to ${platform} ${target}`);
       }
     });
   }
