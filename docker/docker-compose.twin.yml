@@ -1,0 +1,46 @@
+# OpenClaw Twin Bot — 小试AI 数字分身
+# 独立容器，Gemini Pro 3，仅 Discord
+
+services:
+  openclaw-twin:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-twin
+    restart: always
+    ports:
+      - "18793:18789"  # Web UI
+      - "18794:18790"  # Bridge
+    volumes:
+      - ~/.openclaw-twin:/home/node/.openclaw
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TWIN_TOKEN:-twin-bot-token}
+      - OPENCLAW_GATEWAY_HOST=0.0.0.0
+    command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
+    init: true
+    healthcheck:
+      test: ["CMD", "sh", "-c", "node -e \"fetch('http://127.0.0.1:18789/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    networks:
+      - openclaw-net
+
+  # CLI 工具（按需启动）
+  openclaw-twin-cli:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw-twin-cli
+    profiles: ["cli"]
+    volumes:
+      - ~/.openclaw-twin:/home/node/.openclaw
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TWIN_TOKEN:-twin-bot-token}
+    entrypoint: ["node", "openclaw.mjs"]
+    stdin_open: true
+    tty: true
+    networks:
+      - openclaw-net
+
+networks:
+  openclaw-net:
+    external: true
+    name: openclaw-docker_openclaw-net
