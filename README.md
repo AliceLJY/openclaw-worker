@@ -678,13 +678,27 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
-## Related Projects
+## Author's Setup
 
-| Project | Description |
+> 作者的开发环境，仅供参考，你可以用自己喜欢的工具替代
+
+| Item | Setup |
+|------|-------|
+| **Hardware** | MacBook Air M4, 16GB RAM |
+| **Models** | Claude Opus 4.6 (primary), Gemini Pro 3 (secondary), MiniMax M2.5 (scheduled tasks) |
+| **Runtime** | Bun, Docker |
+| **API** | [OpenClaw](https://github.com/openclaw/openclaw) subscription |
+
+*Author's setup — yours may differ.*
+
+## Ecosystem
+
+> 这些项目配合使用效果更好
+
+| Project | What It Does |
 |---------|-------------|
-| [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Multi-turn Claude Code orchestration skill — uses this Worker's Task API + callback to chain multiple rounds of CC execution with human-in-the-loop review |
-| [content-alchemy](https://github.com/AliceLJY/content-alchemy) | WeChat article writing skill — the primary real-world use case driven through this Worker |
-| [OpenClaw](https://github.com/openclaw/openclaw) | The Discord Bot framework that dispatches tasks to this Worker |
+| [content-alchemy](https://github.com/AliceLJY/content-alchemy) | 7-stage content pipeline — the primary use case driven through this Worker |
+| [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Multi-turn CC orchestration — uses this Worker's Task API + callback |
 
 ## Acknowledgments
 
