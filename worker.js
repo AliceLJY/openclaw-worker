@@ -88,6 +88,36 @@ function request(method, path, body = null) {
   });
 }
 
+// ========== 命令黑名单 ==========
+const COMMAND_BLACKLIST = [
+  { pattern: /\bpkill\b/, label: 'pkill' },
+  { pattern: /\bkill\s+-/, label: 'kill -signal' },
+  { pattern: /\bkill\s+\d/, label: 'kill PID' },
+  { pattern: /\bkillall\b/, label: 'killall' },
+  { pattern: /\brm\s+(-[^\s]*r[^\s]*\s+-[^\s]*f|−[^\s]*f[^\s]*\s+-[^\s]*r|-rf|-fr)\b/, label: 'rm -rf' },
+  { pattern: /\brm\s+-[^\s]*r/, label: 'rm -r' },
+  { pattern: /\bshutdown\b/, label: 'shutdown' },
+  { pattern: /\breboot\b/, label: 'reboot' },
+  { pattern: /\bhalt\b/, label: 'halt' },
+  { pattern: /\bpoweroff\b/, label: 'poweroff' },
+  { pattern: /\bmkfs\b/, label: 'mkfs' },
+  { pattern: /\bdd\s+.*of=\/dev\//, label: 'dd to device' },
+  { pattern: /\b:(){ :\|:& };:/, label: 'fork bomb' },
+  { pattern: />\s*\/dev\/sda/, label: 'write to disk device' },
+  { pattern: /\bchmod\s+-R\s+777\s+\/\s*$/, label: 'chmod -R 777 /' },
+  { pattern: /\blaunchctl\s+unload\b/, label: 'launchctl unload' },
+];
+
+function checkCommandBlacklist(command) {
+  const cleanCmd = command.trim();
+  for (const { pattern, label } of COMMAND_BLACKLIST) {
+    if (pattern.test(cleanCmd)) {
+      return label;
+    }
+  }
+  return null;
+}
+
 // ========== 执行命令 ==========
 function executeCommand(command, timeout) {
   return new Promise((resolve) => {
@@ -388,8 +418,21 @@ async function executeTask(task) {
       result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId);
     } else {
       // 默认：执行命令
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
-      result = await executeCommand(task.command, task.timeout);
+      // 先检查命令黑名单
+      const blockedLabel = checkCommandBlacklist(task.command || '');
+      if (blockedLabel) {
+        console.warn(`[安全拦截] 命令被阻止 (${blockedLabel}): ${task.command}`);
+        result = {
+          stdout: '',
+          stderr: `[BLOCKED] 命令被安全策略拦截：包含危险操作 "${blockedLabel}"。此命令不允许通过 Worker 远程执行。`,
+          exitCode: 126,
+          error: `Blocked by command blacklist: ${blockedLabel}`,
+          duration: 0
+        };
+      } else {
+        console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
+        result = await executeCommand(task.command, task.timeout);
+      }
     }
 
     // 上报结果
