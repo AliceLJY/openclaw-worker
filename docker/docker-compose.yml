@@ -6,7 +6,7 @@
 services:
   # OpenClaw 网关服务
   openclaw-gateway:
-    image: ghcr.io/openclaw/openclaw:latest
+    image: ghcr.io/openclaw/openclaw:2026.2.19
     container_name: openclaw-gateway
     restart: always
     ports:
@@ -53,7 +53,7 @@ services:
 
   # CLI 工具（按需启动）
   openclaw-cli:
-    image: ghcr.io/openclaw/openclaw:latest
+    image: ghcr.io/openclaw/openclaw:2026.2.19
     container_name: openclaw-cli
     profiles: ["cli"]
     volumes:
