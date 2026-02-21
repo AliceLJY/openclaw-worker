@@ -21,6 +21,7 @@ services:
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_ANTIGRAVITY_TOKEN:-antigravity-bot-token}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
+      - WORKER_TOKEN=bc3f10860b96a91f5eda17f89b0ab399
       # Telegram 代理已在 openclaw.json channels.telegram.proxy 配置，不需要全局代理
     command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
     init: true
