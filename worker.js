@@ -247,6 +247,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
 
     const shellCmd = `${CLAUDE_PATH} --print${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
     console.log(`[Claude CLI] 命令: ${shellCmd}`);
+    console.log(`[Claude CLI] CLAUDECODE in env: ${process.env.CLAUDECODE || '(unset)'}`);
 
     // 写入实时日志
     try { fs.appendFileSync(CC_LOG, `\n${'='.repeat(60)}\n[${new Date().toISOString()}] CC 开始: ${prompt.slice(0, 80)}...\n${'='.repeat(60)}\n`); } catch (e) {}
@@ -273,6 +274,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
 
     child.stderr.on('data', (data) => {
       stderr += data.toString();
+      try { fs.appendFileSync(CC_LOG, `[STDERR] ${data.toString()}`); } catch (e) {}
     });
 
     // 加 30 秒缓冲：CC 完成时有一小段收尾时间（写文件、输出结果）
