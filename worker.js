@@ -254,6 +254,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
       cwd: process.env.HOME,  // 设置工作目录为用户主目录
       env: {
         ...process.env,
+        CLAUDECODE: undefined,  // 防止 CC 嵌套检测误判
         PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
         TERM: 'xterm-256color',
         HOME: process.env.HOME
