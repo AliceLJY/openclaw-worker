@@ -230,20 +230,21 @@ const CC_LOG = '/tmp/cc-live.log';
 const ccSessions = new Set(); // 跟踪已创建的 CC 会话
 
 function executeClaudeCLI(prompt, timeout, sessionId) {
-    // [2026-02-22] 强制禁用 sessionId
-    sessionId = null;
   return new Promise((resolve) => {
     const startTime = Date.now();
     console.log(`[Claude CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    // 构建会话参数：已有会话用 --resume，新会话用 --session-id
+    // 构建会话参数：检查磁盘上 session 文件是否已存在，而非依赖内存 Set（重启后丢失）
     let sessionFlag = '';
     if (sessionId) {
-      if (ccSessions.has(sessionId)) {
+      // CC session 文件路径：~/.claude/projects/-Users-anxianjingya-openclaw-worker/{UUID}.jsonl
+      const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-anxianjingya-openclaw-worker', `${sessionId}.jsonl`);
+      if (fs.existsSync(sessionFile)) {
         sessionFlag = ` --resume "${sessionId}"`;
+        console.log(`[Claude CLI] 检测到已有 session 文件，使用 --resume`);
       } else {
         sessionFlag = ` --session-id "${sessionId}"`;
-        ccSessions.add(sessionId);
+        console.log(`[Claude CLI] 新 session，使用 --session-id`);
       }
     }
 
