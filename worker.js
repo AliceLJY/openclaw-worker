@@ -344,13 +344,16 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
 
   console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [API:' + sessionId.slice(0, 8) + (sdkSessionId ? ' → SDK:' + sdkSessionId.slice(0, 8) : '') + ']' : ''}`);
 
-  // 构建 options
+  // 构建 options（resume 也需要权限配置，否则子进程立即退出）
+  const baseOptions = {
+    permissionMode: 'bypassPermissions',
+    allowDangerouslySkipPermissions: true,
+    cwd: process.env.HOME,
+  };
   const options = isResume
-    ? { resume: sdkSessionId }
+    ? { ...baseOptions, resume: sdkSessionId }
     : {
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        cwd: process.env.HOME,
+        ...baseOptions,
         settingSources: ['user', 'project', 'local'],
         systemPrompt: { type: 'preset', preset: 'claude_code' },
       };
