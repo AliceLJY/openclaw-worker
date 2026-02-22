@@ -338,9 +338,19 @@ function formatAssistantMessage(msg) {
 async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
   const startTime = Date.now();
 
-  // 通过映射表查找 SDK 的真实 session_id
-  // 如果 map 里没有（比如终端开的会话），直接用原 sessionId 作为 SDK resume ID
-  const sdkSessionId = sessionId ? (sessionIdMap.get(sessionId) || sessionId) : null;
+  // 判断 sessionId 是否对应一个真实的 CC session 文件（终端开的会话）
+  // 如果是，直接用它做 resume，不走 sessionIdMap（避免脏映射覆盖）
+  let sdkSessionId = null;
+  if (sessionId) {
+    const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-' + path.basename(process.env.HOME), sessionId + '.jsonl');
+    if (fs.existsSync(sessionFile)) {
+      // 真实 CC session 文件存在 → 直接 resume 这个终端会话
+      sdkSessionId = sessionId;
+    } else {
+      // 不是终端会话 → 查映射表（worker 自己创建的会话）
+      sdkSessionId = sessionIdMap.get(sessionId) || sessionId;
+    }
+  }
   const isResume = !!sdkSessionId;
 
   console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [API:' + sessionId.slice(0, 8) + (sdkSessionId ? ' → SDK:' + sdkSessionId.slice(0, 8) : '') + ']' : ''}`);
