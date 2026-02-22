@@ -237,8 +237,8 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
     // 构建会话参数：检查磁盘上 session 文件是否已存在，而非依赖内存 Set（重启后丢失）
     let sessionFlag = '';
     if (sessionId) {
-      // CC session 文件路径：~/.claude/projects/-Users-anxianjingya-openclaw-worker/{UUID}.jsonl
-      const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-anxianjingya-openclaw-worker', `${sessionId}.jsonl`);
+      // CC session 文件路径：cwd 是 HOME，所以项目路径是 -Users-anxianjingya
+      const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-anxianjingya', `${sessionId}.jsonl`);
       if (fs.existsSync(sessionFile)) {
         sessionFlag = ` --resume "${sessionId}"`;
         console.log(`[Claude CLI] 检测到已有 session 文件，使用 --resume`);
