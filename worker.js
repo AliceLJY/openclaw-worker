@@ -202,8 +202,9 @@ function readFileFromDisk(filePath) {
 
 // ========== 会话管理 ==========
 const SESSION_FILE = '/tmp/cc-sessions.json';
-const liveSessions = new Map(); // sessionId → { lastActivity, callbackChannel }
-const ccSessions = new Set();   // CLI 模式用：跟踪已创建的 CC 会话
+const liveSessions = new Map();   // sdkSessionId → { lastActivity, callbackChannel }
+const sessionIdMap = new Map();   // taskApiSessionId → sdkSessionId（映射表）
+const ccSessions = new Set();     // CLI 模式用：跟踪已创建的 CC 会话
 
 function loadSessions() {
   try {
@@ -214,6 +215,10 @@ function loadSessions() {
         callbackChannel: s.callbackChannel
       });
       ccSessions.add(s.sessionId);
+      // 恢复映射关系
+      if (s.taskApiId) {
+        sessionIdMap.set(s.taskApiId, s.sessionId);
+      }
     }
     console.log(`[会话] 恢复了 ${liveSessions.size} 个会话记录`);
   } catch {
@@ -223,8 +228,14 @@ function loadSessions() {
 
 function saveSessions() {
   try {
+    // 反向查找 taskApiId
+    const reverseMap = new Map();
+    for (const [taskApiId, sdkId] of sessionIdMap) {
+      reverseMap.set(sdkId, taskApiId);
+    }
     const data = Array.from(liveSessions.entries()).map(([sessionId, s]) => ({
       sessionId,
+      taskApiId: reverseMap.get(sessionId) || null,
       lastActivity: s.lastActivity,
       callbackChannel: s.callbackChannel
     }));
@@ -245,6 +256,10 @@ setInterval(() => {
     if (now - session.lastActivity > 30 * 60 * 1000) {
       liveSessions.delete(id);
       ccSessions.delete(id);
+      // 清理映射表中指向该 SDK session 的条目
+      for (const [apiId, sdkId] of sessionIdMap) {
+        if (sdkId === id) sessionIdMap.delete(apiId);
+      }
       cleaned++;
     }
   }
@@ -322,13 +337,16 @@ function formatAssistantMessage(msg) {
 // ========== Agent SDK 执行 ==========
 async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
   const startTime = Date.now();
-  const isResume = sessionId && liveSessions.has(sessionId);
 
-  console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [' + sessionId.slice(0, 8) + ']' : ''}`);
+  // 通过映射表查找 SDK 的真实 session_id
+  const sdkSessionId = sessionId ? (sessionIdMap.get(sessionId) || null) : null;
+  const isResume = !!sdkSessionId && liveSessions.has(sdkSessionId);
+
+  console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [API:' + sessionId.slice(0, 8) + (sdkSessionId ? ' → SDK:' + sdkSessionId.slice(0, 8) : '') + ']' : ''}`);
 
   // 构建 options
   const options = isResume
-    ? { resume: sessionId }
+    ? { resume: sdkSessionId }
     : {
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
@@ -420,12 +438,17 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
 
   const duration = Date.now() - startTime;
 
-  // 更新会话池
+  // 更新会话池 + 映射表
   if (capturedSessionId) {
     liveSessions.set(capturedSessionId, {
       lastActivity: Date.now(),
       callbackChannel
     });
+    // Task API sessionId → SDK session_id 映射
+    if (sessionId && sessionId !== capturedSessionId) {
+      sessionIdMap.set(sessionId, capturedSessionId);
+      console.log(`[SDK] 映射: API:${sessionId.slice(0, 8)} → SDK:${capturedSessionId.slice(0, 8)}`);
+    }
     ccSessions.add(capturedSessionId);
     saveSessions();
   }
