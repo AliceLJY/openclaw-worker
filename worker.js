@@ -269,36 +269,61 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ========== Discord 推送（通用） ==========
+// ========== Discord 推送（直接 API，绕过 AntiBot LLM） ==========
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+
 function notifyDiscord(callbackChannel, sessionId, text, prefix) {
   if (!callbackChannel) return;
 
   const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId.slice(0, 8)}\`` : '';
-  const message = `**${prefix}**${sessionInfo}\n\n${text}`;
+  let message = `**${prefix}**${sessionInfo}\n\n${text}`;
+
+  // Discord 消息上限 2000 字符
+  if (message.length > 2000) {
+    message = message.slice(0, 1997) + '...';
+  }
 
   const maxRetries = 3;
   let attempt = 0;
 
   function trySend() {
     attempt++;
-    execFile('docker', [
-      'exec', 'openclaw-antigravity',
-      'node', 'openclaw.mjs', 'message', 'send',
-      '--channel', 'discord',
-      '--target', `channel:${callbackChannel}`,
-      '-m', message
-    ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error) => {
-      if (error) {
-        if (attempt < maxRetries) {
-          console.error(`[回调] 第${attempt}次发送失败，5s 后重试: ${error.message.slice(0, 100)}`);
+    const body = JSON.stringify({ content: message });
+    const req = https.request({
+      hostname: 'discord.com',
+      path: `/api/v10/channels/${callbackChannel}/messages`,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log(`[回调] 直接推送到 Discord (${prefix})`);
+        } else if (attempt < maxRetries) {
+          console.error(`[回调] 第${attempt}次发送失败 (${res.statusCode})，5s 后重试: ${data.slice(0, 100)}`);
           setTimeout(trySend, 5000);
         } else {
-          console.error(`[回调] ${maxRetries}次均失败: ${error.message.slice(0, 200)}`);
+          console.error(`[回调] ${maxRetries}次均失败 (${res.statusCode}): ${data.slice(0, 200)}`);
         }
+      });
+    });
+
+    req.on('error', (error) => {
+      if (attempt < maxRetries) {
+        console.error(`[回调] 第${attempt}次网络错误，5s 后重试: ${error.message}`);
+        setTimeout(trySend, 5000);
       } else {
-        console.log(`[回调] 推送到 Discord (${prefix})`);
+        console.error(`[回调] ${maxRetries}次均失败: ${error.message}`);
       }
     });
+
+    req.write(body);
+    req.end();
   }
 
   trySend();
