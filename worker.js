@@ -437,6 +437,7 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
 
   clearTimeout(timeoutHandle);
   if (debounceTimer) clearTimeout(debounceTimer);
+  buffer = [];   // 清空残余，避免与 notifyCompletion 重复发送
   flush();
 
   const duration = Date.now() - startTime;
