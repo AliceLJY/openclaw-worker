@@ -654,6 +654,9 @@ async function executeTask(task) {
       result = await readFileFromDisk(task.path);
     } else if (task.type === 'claude-cli') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
+      // 立即直推 ack 到 Discord，不经过 AntiBot LLM
+      notifyDiscord(task.callbackChannel, task.sessionId,
+        `"${(task.prompt || '').slice(0, 80)}..."`, '📨 已收到，CC 启动中');
       if (sdkQuery) {
         result = await executeClaudeSDK(task.prompt, task.timeout, task.sessionId, task.callbackChannel);
       } else {
