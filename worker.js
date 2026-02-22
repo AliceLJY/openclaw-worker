@@ -1,17 +1,30 @@
 #!/usr/bin/env node
 /**
  * Mac 本地 Worker
- * 主动轮询云端任务，执行后上报结果
+ * Agent SDK 版本：流式输出 + 会话管理
  *
  * 运行: node worker.js
  * 或: WORKER_URL=https://xxx WORKER_TOKEN=xxx node worker.js
  */
 
-const { exec, spawn } = require('child_process');
-const https = require('https');
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+import { exec, spawn, execFile } from 'child_process';
+import https from 'https';
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+
+// 防止嵌套检测（从 CC 内部启动时需要）
+delete process.env.CLAUDECODE;
+
+// ========== Agent SDK 加载（失败则回退 CLI） ==========
+let sdkQuery;
+try {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  sdkQuery = sdk.query;
+  console.log('[SDK] Agent SDK 加载成功');
+} catch (e) {
+  console.warn(`[SDK] Agent SDK 加载失败，将使用 CLI 模式: ${e.message}`);
+}
 
 // ========== 配置 ==========
 const CONFIG = {
@@ -27,26 +40,30 @@ const CONFIG = {
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,
   // 命令执行超时（毫秒）- 改为5分钟，适配Claude AI任务和content-alchemy skill
   defaultTimeout: 300000,
+  // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
+  openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
+  openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
 };
 
 console.log('========================================');
-console.log('  Mac Worker 启动 (并发模式)');
+console.log('  Mac Worker 启动 (Agent SDK + CLI 双模式)');
 console.log('========================================');
 console.log(`服务器: ${CONFIG.serverUrl}`);
 console.log(`长轮询等待: ${CONFIG.longPollWait}ms`);
 console.log(`最大并发: ${CONFIG.maxConcurrent} 个任务`);
+console.log(`执行模式: ${sdkQuery ? 'Agent SDK (优先)' : 'CLI (回退)'}`);
 console.log('');
 console.log('支持的任务类型:');
 console.log('  - command: 执行 shell 命令');
 console.log('  - file-read: 读取文件');
 console.log('  - file-write: 写入文件');
-console.log('  - claude-cli: 调用本地 Claude Code CLI');
+console.log('  - claude-cli: 调用本地 Claude Code (SDK/CLI)');
 console.log('');
 
 // ========== HTTP 请求封装 ==========
-function request(method, path, body = null) {
+function request(method, urlPath, body = null) {
   return new Promise((resolve, reject) => {
-    const url = new URL(path, CONFIG.serverUrl);
+    const url = new URL(urlPath, CONFIG.serverUrl);
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
 
@@ -75,7 +92,7 @@ function request(method, path, body = null) {
 
     req.on('error', reject);
     // 长轮询请求的超时要大于 hold 时间，避免提前断开
-    const reqTimeout = path.includes('/worker/poll') ? CONFIG.longPollWait + 5000 : 10000;
+    const reqTimeout = urlPath.includes('/worker/poll') ? CONFIG.longPollWait + 5000 : 10000;
     req.setTimeout(reqTimeout, () => {
       req.destroy();
       reject(new Error('Request timeout'));
@@ -88,61 +105,25 @@ function request(method, path, body = null) {
   });
 }
 
-// ========== 命令黑名单 ==========
-const COMMAND_BLACKLIST = [
-  { pattern: /\bpkill\b/, label: 'pkill' },
-  { pattern: /\bkill\s+-/, label: 'kill -signal' },
-  { pattern: /\bkill\s+\d/, label: 'kill PID' },
-  { pattern: /\bkillall\b/, label: 'killall' },
-  { pattern: /\brm\s+(-[^\s]*r[^\s]*\s+-[^\s]*f|−[^\s]*f[^\s]*\s+-[^\s]*r|-rf|-fr)\b/, label: 'rm -rf' },
-  { pattern: /\brm\s+-[^\s]*r/, label: 'rm -r' },
-  { pattern: /\bshutdown\b/, label: 'shutdown' },
-  { pattern: /\breboot\b/, label: 'reboot' },
-  { pattern: /\bhalt\b/, label: 'halt' },
-  { pattern: /\bpoweroff\b/, label: 'poweroff' },
-  { pattern: /\bmkfs\b/, label: 'mkfs' },
-  { pattern: /\bdd\s+.*of=\/dev\//, label: 'dd to device' },
-  { pattern: /\b:(){ :\|:& };:/, label: 'fork bomb' },
-  { pattern: />\s*\/dev\/sda/, label: 'write to disk device' },
-  { pattern: /\bchmod\s+-R\s+777\s+\/\s*$/, label: 'chmod -R 777 /' },
-  { pattern: /\blaunchctl\s+unload\b/, label: 'launchctl unload' },
-];
-
-function checkCommandBlacklist(command) {
-  const cleanCmd = command.trim();
-  for (const { pattern, label } of COMMAND_BLACKLIST) {
-    if (pattern.test(cleanCmd)) {
-      return label;
-    }
-  }
-  return null;
-}
-
 // ========== 执行命令 ==========
+// NOTE: exec() 在此处是有意使用的——worker 本身就是命令执行服务
 function executeCommand(command, timeout) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-
-    // 清理命令：去掉末尾的换行符和空格
     const cleanCommand = command.trim();
-
-    // 使用 login shell (-l) 来加载 .zshrc 配置（Claude Code 需要）
-    // 直接用 /bin/zsh -l -c 执行，不再指定 shell 选项避免双重包装
     const wrappedCommand = `/bin/zsh -l -c ${JSON.stringify(cleanCommand)}`;
 
     exec(wrappedCommand, {
       timeout: timeout || CONFIG.defaultTimeout,
-      maxBuffer: 10 * 1024 * 1024, // 10MB
-      // 移除 shell 选项，避免双重包装
+      maxBuffer: 10 * 1024 * 1024,
       env: {
         ...process.env,
         PATH: process.env.PATH + ':/usr/local/bin:/opt/homebrew/bin',
-        HOME: process.env.HOME, // 确保 HOME 环境变量
-        USER: process.env.USER  // 确保 USER 环境变量
+        HOME: process.env.HOME,
+        USER: process.env.USER
       }
     }, (error, stdout, stderr) => {
       const duration = Date.now() - startTime;
-
       resolve({
         stdout: stdout || '',
         stderr: stderr || '',
@@ -162,29 +143,24 @@ function expandHome(filePath) {
   return filePath;
 }
 
-function writeFile(filePath, content, encoding) {
+function writeFileToDisk(filePath, content, encoding) {
   return new Promise((resolve) => {
     try {
-      // 清理 path 中的换行符
       const cleanPath = filePath.trim();
       const fullPath = expandHome(cleanPath);
       console.log(`[写入] ${fullPath}`);
 
       const dir = path.dirname(fullPath);
-
-      // 确保目录存在
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      // 如果是 base64 编码，先解码；同时 trim content
       const cleanContent = content ? content.trim() : '';
       const data = encoding === 'base64'
         ? Buffer.from(cleanContent, 'base64')
         : cleanContent;
 
       fs.writeFileSync(fullPath, data);
-
       resolve({
         stdout: `File written: ${fullPath}`,
         stderr: '',
@@ -202,7 +178,7 @@ function writeFile(filePath, content, encoding) {
   });
 }
 
-function readFile(filePath) {
+function readFileFromDisk(filePath) {
   return new Promise((resolve) => {
     try {
       const fullPath = expandHome(filePath);
@@ -224,41 +200,278 @@ function readFile(filePath) {
   });
 }
 
-// ========== 执行本地 Claude CLI ==========
+// ========== 会话管理 ==========
+const SESSION_FILE = '/tmp/cc-sessions.json';
+const liveSessions = new Map(); // sessionId → { lastActivity, callbackChannel }
+const ccSessions = new Set();   // CLI 模式用：跟踪已创建的 CC 会话
+
+function loadSessions() {
+  try {
+    const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+    for (const s of data) {
+      liveSessions.set(s.sessionId, {
+        lastActivity: s.lastActivity,
+        callbackChannel: s.callbackChannel
+      });
+      ccSessions.add(s.sessionId);
+    }
+    console.log(`[会话] 恢复了 ${liveSessions.size} 个会话记录`);
+  } catch {
+    // 文件不存在或格式错误，忽略
+  }
+}
+
+function saveSessions() {
+  try {
+    const data = Array.from(liveSessions.entries()).map(([sessionId, s]) => ({
+      sessionId,
+      lastActivity: s.lastActivity,
+      callbackChannel: s.callbackChannel
+    }));
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error('[会话] 保存失败:', e.message);
+  }
+}
+
+loadSessions();
+
+// 每 5 分钟清理超过 30 分钟不活跃的会话
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [id] of liveSessions) {
+    const session = liveSessions.get(id);
+    if (now - session.lastActivity > 30 * 60 * 1000) {
+      liveSessions.delete(id);
+      ccSessions.delete(id);
+      cleaned++;
+    }
+  }
+  if (cleaned > 0) {
+    console.log(`[会话] 清理了 ${cleaned} 个过期会话，剩余 ${liveSessions.size} 个`);
+    saveSessions();
+  }
+}, 5 * 60 * 1000);
+
+// ========== Discord 推送（通用） ==========
+function notifyDiscord(callbackChannel, sessionId, text, prefix) {
+  if (!callbackChannel) return;
+
+  const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId.slice(0, 8)}\`` : '';
+  const message = `**${prefix}**${sessionInfo}\n\n${text}`;
+
+  const maxRetries = 3;
+  let attempt = 0;
+
+  function trySend() {
+    attempt++;
+    execFile('docker', [
+      'exec', 'openclaw-antigravity',
+      'node', 'openclaw.mjs', 'message', 'send',
+      '--channel', 'discord',
+      '--target', `channel:${callbackChannel}`,
+      '-m', message
+    ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error) => {
+      if (error) {
+        if (attempt < maxRetries) {
+          console.error(`[回调] 第${attempt}次发送失败，5s 后重试: ${error.message.slice(0, 100)}`);
+          setTimeout(trySend, 5000);
+        } else {
+          console.error(`[回调] ${maxRetries}次均失败: ${error.message.slice(0, 200)}`);
+        }
+      } else {
+        console.log(`[回调] 推送到 Discord (${prefix})`);
+      }
+    });
+  }
+
+  trySend();
+}
+
+// ========== 消息过滤 & 格式化（SDK 模式用） ==========
+const SILENT_TOOLS = new Set([
+  'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'
+]);
+
+const READ_ONLY_TOOLS = new Set([
+  'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'
+]);
+
+function formatAssistantMessage(msg) {
+  if (msg.type !== 'assistant' || !msg.message?.content) return null;
+
+  const parts = [];
+
+  for (const block of msg.message.content) {
+    if (block.type === 'text' && block.text) {
+      parts.push(block.text.slice(0, 500));
+    } else if (block.type === 'tool_use') {
+      if (SILENT_TOOLS.has(block.name)) continue;
+      if (READ_ONLY_TOOLS.has(block.name)) continue;
+      const inputPreview = typeof block.input === 'object'
+        ? (block.input.command || block.input.file_path || block.input.description || '').slice(0, 80)
+        : '';
+      parts.push(`🔧 ${block.name}${inputPreview ? ': ' + inputPreview : ''}`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+// ========== Agent SDK 执行 ==========
+async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
+  const startTime = Date.now();
+  const isResume = sessionId && liveSessions.has(sessionId);
+
+  console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [' + sessionId.slice(0, 8) + ']' : ''}`);
+
+  // 构建 options
+  const options = isResume
+    ? { resume: sessionId }
+    : {
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        cwd: process.env.HOME,
+        settingSources: ['user', 'project', 'local'],
+        systemPrompt: { type: 'preset', preset: 'claude_code' },
+      };
+
+  // 流式输出 debounce
+  let buffer = [];
+  let debounceTimer = null;
+  const DEBOUNCE_MS = 3000;
+  let capturedSessionId = sessionId || null;
+
+  function flush() {
+    if (buffer.length === 0) return;
+    const text = buffer.join('\n').slice(-1500);
+    notifyDiscord(callbackChannel, capturedSessionId, text, '📡 CC 工作中');
+    buffer = [];
+    debounceTimer = null;
+  }
+
+  let resultText = '';
+  let resultSubtype = 'success';
+  let resultErrors = [];
+
+  // 超时保护
+  const timeoutMs = (timeout || CONFIG.defaultTimeout) + 30000;
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    abortController.abort();
+  }, timeoutMs);
+
+  try {
+    for await (const message of sdkQuery({
+      prompt,
+      options: { ...options, abortController }
+    })) {
+      // 捕获 session ID
+      if (message.type === 'system' && message.subtype === 'init') {
+        capturedSessionId = message.session_id;
+        console.log(`[SDK] 会话 ID: ${capturedSessionId.slice(0, 8)}`);
+      }
+
+      // 格式化 assistant 消息
+      if (message.type === 'assistant') {
+        const formatted = formatAssistantMessage(message);
+        if (formatted) {
+          buffer.push(formatted);
+          if (!debounceTimer) {
+            debounceTimer = setTimeout(flush, DEBOUNCE_MS);
+          }
+        }
+      }
+
+      // 捕获最终结果
+      if (message.type === 'result') {
+        resultSubtype = message.subtype;
+        if (message.subtype === 'success') {
+          resultText = message.result || '';
+        } else {
+          resultErrors = message.errors || [];
+          resultText = resultErrors.join('\n');
+        }
+        console.log(`[SDK] 结果: ${message.subtype}, 耗时 ${message.duration_ms}ms, 花费 $${message.total_cost_usd?.toFixed(4) || '?'}`);
+      }
+    }
+  } catch (err) {
+    clearTimeout(timeoutHandle);
+    if (debounceTimer) clearTimeout(debounceTimer);
+    flush();
+
+    const isAbort = err.name === 'AbortError' || abortController.signal.aborted;
+    console.error(`[SDK] ${isAbort ? '超时' : '错误'}: ${err.message}`);
+
+    return {
+      stdout: resultText || '',
+      stderr: isAbort ? 'Timeout' : err.message,
+      exitCode: isAbort ? -1 : 1,
+      error: isAbort ? 'Timeout' : err.message,
+      duration: Date.now() - startTime,
+      metadata: capturedSessionId ? { sessionId: capturedSessionId } : undefined
+    };
+  }
+
+  clearTimeout(timeoutHandle);
+  if (debounceTimer) clearTimeout(debounceTimer);
+  flush();
+
+  const duration = Date.now() - startTime;
+
+  // 更新会话池
+  if (capturedSessionId) {
+    liveSessions.set(capturedSessionId, {
+      lastActivity: Date.now(),
+      callbackChannel
+    });
+    ccSessions.add(capturedSessionId);
+    saveSessions();
+  }
+
+  const isError = resultSubtype !== 'success';
+  console.log(`[SDK] 完成，耗时 ${duration}ms，结果 ${resultText.length} 字符`);
+
+  return {
+    stdout: resultText,
+    stderr: isError ? resultErrors.join('\n') : '',
+    exitCode: isError ? 1 : 0,
+    error: isError ? `SDK ${resultSubtype}` : null,
+    duration,
+    metadata: capturedSessionId ? { sessionId: capturedSessionId } : undefined
+  };
+}
+
+// ========== CLI 回退执行（原有逻辑） ==========
 const CLAUDE_PATH = '/opt/homebrew/bin/claude';
 const CC_LOG = '/tmp/cc-live.log';
-const ccSessions = new Set(); // 跟踪已创建的 CC 会话
 
 function executeClaudeCLI(prompt, timeout, sessionId) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     console.log(`[Claude CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    // 构建会话参数：检查磁盘上 session 文件是否已存在，而非依赖内存 Set（重启后丢失）
+    // 构建会话参数：已有会话用 --resume，新会话用 --session-id
     let sessionFlag = '';
     if (sessionId) {
-      // CC session 文件路径：cwd 是 HOME，所以项目路径是 -Users-anxianjingya
-      const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-anxianjingya', `${sessionId}.jsonl`);
-      if (fs.existsSync(sessionFile)) {
+      if (ccSessions.has(sessionId)) {
         sessionFlag = ` --resume "${sessionId}"`;
-        console.log(`[Claude CLI] 检测到已有 session 文件，使用 --resume`);
       } else {
         sessionFlag = ` --session-id "${sessionId}"`;
-        console.log(`[Claude CLI] 新 session，使用 --session-id`);
+        ccSessions.add(sessionId);
       }
     }
 
     const shellCmd = `${CLAUDE_PATH} --print${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
     console.log(`[Claude CLI] 命令: ${shellCmd}`);
-    console.log(`[Claude CLI] CLAUDECODE in env: ${process.env.CLAUDECODE || '(unset)'}`);
 
     // 写入实时日志
     try { fs.appendFileSync(CC_LOG, `\n${'='.repeat(60)}\n[${new Date().toISOString()}] CC 开始: ${prompt.slice(0, 80)}...\n${'='.repeat(60)}\n`); } catch (e) {}
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
-      cwd: process.env.HOME,  // 设置工作目录为用户主目录
+      cwd: process.env.HOME,
       env: {
         ...process.env,
-        CLAUDECODE: undefined,  // 防止 CC 嵌套检测误判
         PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
         TERM: 'xterm-256color',
         HOME: process.env.HOME
@@ -277,10 +490,8 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
 
     child.stderr.on('data', (data) => {
       stderr += data.toString();
-      try { fs.appendFileSync(CC_LOG, `[STDERR] ${data.toString()}`); } catch (e) {}
     });
 
-    // 加 30 秒缓冲：CC 完成时有一小段收尾时间（写文件、输出结果）
     const effectiveTimeout = (timeout || CONFIG.defaultTimeout) + 30000;
     const timer = setTimeout(() => {
       child.kill();
@@ -298,10 +509,8 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
       const duration = Date.now() - startTime;
       console.log(`[Claude CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节`);
 
-      // 写入实时日志结束标记
       try { fs.appendFileSync(CC_LOG, `\n[${new Date().toISOString()}] CC 结束 (${duration}ms, exit ${code})\n`); } catch (e) {}
 
-      // 检测截图标记
       const screenshotMatch = stdout.match(/PLEASE_UPLOAD_TO_DISCORD:\s*(.+\.png)/);
       const screenshotPath = screenshotMatch ? screenshotMatch[1].trim() : null;
 
@@ -309,7 +518,6 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
         console.log(`[Claude CLI] 检测到截图: ${screenshotPath}`);
       }
 
-      // 从 history.jsonl 提取 CC 会话 ID（用于多轮对话跟踪）
       let ccSessionId = sessionId || null;
       if (!ccSessionId) {
         try {
@@ -328,7 +536,6 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
         duration
       };
 
-      // 添加 metadata（截图、会话ID）
       const metadata = {};
       if (screenshotPath) metadata.screenshotPath = screenshotPath;
       if (ccSessionId) metadata.sessionId = ccSessionId;
@@ -350,116 +557,64 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
   });
 }
 
-// ========== OpenClaw CLI 回调（直接发 Discord 消息，不经过 agent） ==========
-function notifyOpenClaw(task, result) {
-  // 只对 claude-cli 任务回调，且需要有 callbackChannel
+// ========== 完成通知（最终结果推 Discord） ==========
+function notifyCompletion(task, result) {
   if (task.type !== 'claude-cli' || !task.callbackChannel) return;
 
   const summary = (result.stdout || '').slice(-1500) || '(无输出)';
   const status = result.exitCode === 0 ? '完成' : '失败';
   const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
 
-  // 包含 sessionId 供分段多轮对话使用
-  const sessionId = result.metadata?.sessionId;
-  const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId}\`` : '';
+  const prefix = result.exitCode === 0
+    ? `✅ CC 任务${status}（耗时 ${duration}）`
+    : `❌ CC 任务${status}（耗时 ${duration}）`;
 
-  const message = `**CC 任务${status}**（耗时 ${duration}）${sessionInfo}\n\n${summary}`;
-
-  // 用 execFile 避免 shell 注入，通过 docker exec 调用 OpenClaw CLI
-  // 带重试：bot 容器可能刚好在重启
-  const { execFile } = require('child_process');
-  const maxRetries = 3;
-  let attempt = 0;
-
-  const platform = task.callbackPlatform || 'discord';
-  const target = platform === 'telegram' ? task.callbackChannel : `channel:${task.callbackChannel}`;
-
-  function trySend() {
-    attempt++;
-    execFile('docker', [
-      'exec', 'openclaw-antigravity',
-      'node', 'openclaw.mjs', 'message', 'send',
-      '--channel', platform,
-      '--target', target,
-      '-m', message
-    ], { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        if (attempt < maxRetries) {
-          console.error(`[回调] 第${attempt}次发送失败，${5}s 后重试: ${error.message.slice(0, 100)}`);
-          setTimeout(trySend, 5000);
-        } else {
-          console.error(`[回调] ${maxRetries}次均失败: ${error.message.slice(0, 200)}`);
-        }
-      } else {
-        console.log(`[回调] 已推送到 ${platform} ${target}`);
-      }
-    });
-  }
-
-  trySend();
+  notifyDiscord(task.callbackChannel, result.metadata?.sessionId, summary, prefix);
 }
 
 // ========== 并发任务管理 ==========
 let isRunning = true;
 let consecutiveErrors = 0;
-const runningTasks = new Set(); // 跟踪运行中的任务
+const runningTasks = new Set();
 
-// 执行单个任务（独立 Promise）
 async function executeTask(task) {
   const taskId = task.id.slice(0, 8);
 
   try {
-    // 根据任务类型执行
     let result;
 
     if (task.type === 'file-write') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [文件写入] ${taskId}... - ${task.path.trim()}`);
-      result = await writeFile(task.path, task.content, task.encoding);
+      result = await writeFileToDisk(task.path, task.content, task.encoding);
     } else if (task.type === 'file-read') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [文件读取] ${taskId}... - ${task.path}`);
-      result = await readFile(task.path);
+      result = await readFileFromDisk(task.path);
     } else if (task.type === 'claude-cli') {
-      // 调用本地 Claude Code CLI
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
-      result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId);
-    } else {
-      // 默认：执行命令
-      // 先检查命令黑名单
-      const blockedLabel = checkCommandBlacklist(task.command || '');
-      if (blockedLabel) {
-        console.warn(`[安全拦截] 命令被阻止 (${blockedLabel}): ${task.command}`);
-        result = {
-          stdout: '',
-          stderr: `[BLOCKED] 命令被安全策略拦截：包含危险操作 "${blockedLabel}"。此命令不允许通过 Worker 远程执行。`,
-          exitCode: 126,
-          error: `Blocked by command blacklist: ${blockedLabel}`,
-          duration: 0
-        };
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
+      if (sdkQuery) {
+        result = await executeClaudeSDK(task.prompt, task.timeout, task.sessionId, task.callbackChannel);
       } else {
-        console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
-        result = await executeCommand(task.command, task.timeout);
+        result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId);
       }
+    } else {
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
+      result = await executeCommand(task.command, task.timeout);
     }
 
     // 上报结果
-    const reportRes = await request('POST', '/worker/result', {
+    await request('POST', '/worker/result', {
       taskId: task.id,
       ...result
     });
 
-    // CC 任务完成后回调通知 OpenClaw bot（跳过如果服务端已处理）
-    if (reportRes.data?.callbackHandled) {
-      console.log(`[回调] 服务端已处理，跳过 Worker 回调`);
-    } else {
-      notifyOpenClaw(task, result);
-    }
+    // CC 任务完成后回调通知 Discord
+    notifyCompletion(task, result);
 
     const status = result.exitCode === 0 ? '✓' : '✗';
     console.log(`[完成] ${status} ${taskId}... (剩余: ${runningTasks.size - 1})`);
 
   } catch (err) {
     console.error(`[错误] ${taskId}... - ${err.message}`);
-    // 上报错误
     try {
       await request('POST', '/worker/result', {
         taskId: task.id,
@@ -476,17 +631,15 @@ async function executeTask(task) {
   }
 }
 
-// 主轮询循环（只负责拉取任务）
+// 主轮询循环
 async function pollAndExecute() {
   while (isRunning) {
     try {
-      // 检查是否有空闲槽位
       if (runningTasks.size >= CONFIG.maxConcurrent) {
         await sleep(CONFIG.pollInterval);
         continue;
       }
 
-      // 长轮询获取任务（服务器会 hold 住连接等任务到来）
       const pollRes = await request('GET', `/worker/poll?wait=${CONFIG.longPollWait}`);
 
       if (pollRes.status === 401) {
@@ -496,25 +649,18 @@ async function pollAndExecute() {
       }
 
       const task = pollRes.data;
-      consecutiveErrors = 0; // 重置错误计数
+      consecutiveErrors = 0;
 
-      if (!task) {
-        // 服务器已经 hold 了 longPollWait，直接重试
-        continue;
-      }
+      if (!task) continue;
 
-      // 启动任务（不等待完成）
       runningTasks.add(task.id);
-      executeTask(task); // 不 await，让它在后台运行
+      executeTask(task);
 
-      // 立即尝试拉取下一个任务（如果还有空闲槽位）
-      if (runningTasks.size < CONFIG.maxConcurrent) {
-        continue; // 立即进入下一次循环
-      }
+      if (runningTasks.size < CONFIG.maxConcurrent) continue;
 
     } catch (err) {
       consecutiveErrors++;
-      const waitTime = Math.min(consecutiveErrors * 5000, 60000); // 最多等 1 分钟
+      const waitTime = Math.min(consecutiveErrors * 5000, 60000);
 
       if (consecutiveErrors === 1) {
         console.error(`[连接失败] ${err.message}`);
@@ -530,16 +676,27 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ========== 导出活跃会话列表（供外部查询） ==========
+export function getActiveSessions() {
+  return Array.from(liveSessions.entries()).map(([sessionId, s]) => ({
+    sessionId,
+    lastActivity: s.lastActivity,
+    callbackChannel: s.callbackChannel
+  }));
+}
+
 // ========== 优雅退出 ==========
 process.on('SIGINT', () => {
   console.log('\n[退出] 收到 Ctrl+C，正在停止...');
   isRunning = false;
+  saveSessions();
   setTimeout(() => process.exit(0), 1000);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n[退出] 收到终止信号，正在停止...');
   isRunning = false;
+  saveSessions();
   setTimeout(() => process.exit(0), 1000);
 });
 

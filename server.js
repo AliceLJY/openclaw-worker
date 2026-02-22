@@ -3,8 +3,9 @@
  * 部署在腾讯云服务器上，和 OpenClaw 一起跑
  */
 
-const express = require('express');
-const crypto = require('crypto');
+import express from 'express';
+import crypto from 'crypto';
+
 const app = express();
 
 app.use(express.json());
@@ -13,15 +14,12 @@ app.use(express.json());
 const AUTH_TOKEN = process.env.WORKER_TOKEN || 'change-me-to-a-secure-token';
 const PORT = process.env.WORKER_PORT || 3456;
 
-// Callback: push CC results to Discord via OpenClaw CLI
-// Docker mode (Mac): CALLBACK_CONTAINER=openclaw-antigravity
-// Native mode (AWS): CALLBACK_CLI=/path/to/openclaw.mjs
-const CALLBACK_CONTAINER = process.env.CALLBACK_CONTAINER || '';
-const CALLBACK_CLI = process.env.CALLBACK_CLI || '';
-
 // ========== 内存任务队列 ==========
 const tasks = new Map();      // taskId -> task
 const results = new Map();    // taskId -> result
+
+// ========== 活跃会话跟踪 ==========
+const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
 
 // ========== 认证中间件 ==========
 function auth(req, res, next) {
@@ -36,7 +34,12 @@ function auth(req, res, next) {
 
 // 健康检查
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', tasks: tasks.size, results: results.size });
+  res.json({
+    status: 'ok',
+    tasks: tasks.size,
+    results: results.size,
+    activeSessions: activeSessions.size
+  });
 });
 
 // [云端 OpenClaw 调用] 提交任务
@@ -153,14 +156,15 @@ app.post('/worker/result', auth, (req, res) => {
     console.log(`[Worker] Screenshot: ${metadata.screenshotPath}`);
   }
 
-  // Server-side callback: push result to Discord if configured
-  let callbackHandled = false;
-  const task = tasks.get(taskId);
-  if (task) {
-    callbackHandled = notifyCallback(task, result);
+  // 更新会话跟踪
+  if (metadata?.sessionId) {
+    activeSessions.set(metadata.sessionId, {
+      lastActivity: Date.now(),
+      taskCount: (activeSessions.get(metadata.sessionId)?.taskCount || 0) + 1
+    });
   }
 
-  res.json({ success: true, callbackHandled });
+  res.json({ success: true });
 });
 
 // ========== 文件写入 API（绕过 shell 转义问题） ==========
@@ -217,7 +221,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackContainer, callbackPlatform } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -233,80 +237,42 @@ app.post('/claude', auth, (req, res) => {
     timeout,
     sessionId: effectiveSessionId,
     callbackChannel: callbackChannel || null,
-    callbackContainer: callbackContainer || null,
-    callbackPlatform: callbackPlatform || 'discord',
     status: 'pending',
     createdAt: Date.now()
   };
 
   tasks.set(taskId, task);
+
+  // 更新会话跟踪
+  activeSessions.set(effectiveSessionId, {
+    lastActivity: Date.now(),
+    taskCount: (activeSessions.get(effectiveSessionId)?.taskCount || 0)
+  });
+
   const isResume = !!sessionId;
   console.log(`[Claude] Task: ${taskId} [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
   res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
 
-// ========== 服务端回调（推送 CC 结果到 Discord） ==========
-function notifyCallback(task, result) {
-  if (task.type !== 'claude-cli' || !task.callbackChannel) return false;
-  // Per-request container overrides global env var
-  const effectiveContainer = task.callbackContainer || CALLBACK_CONTAINER;
-  if (!CALLBACK_CLI && !effectiveContainer) return false;
+// ========== 会话管理 API ==========
 
-  const summary = (result.stdout || '').slice(-1500) || '(无输出)';
-  const status = result.exitCode === 0 ? '完成' : '失败';
-  const duration = result.completedAt && task.createdAt
-    ? `${Math.round((result.completedAt - task.createdAt) / 1000)}s` : '未知';
-  const sessionId = result.metadata?.sessionId || task.sessionId;
-  const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId}\`` : '';
-  const message = `**CC 任务${status}**（耗时 ${duration}）${sessionInfo}\n\n${summary}`;
-
-  const { execFile } = require('child_process');
-  const maxRetries = 3;
-  let attempt = 0;
-
-  function trySend() {
-    attempt++;
-    let cmd, args;
-
-    const platform = task.callbackPlatform || 'discord';
-    const target = platform === 'telegram' ? task.callbackChannel : `channel:${task.callbackChannel}`;
-
-    if (effectiveContainer) {
-      // Docker mode: docker exec <container> node openclaw.mjs message send ...
-      cmd = 'docker';
-      args = ['exec', effectiveContainer, 'node', 'openclaw.mjs', 'message', 'send',
-        '--channel', platform, '--target', target, '-m', message];
-    } else {
-      // Native CLI mode: node <path/to/openclaw.mjs> message send ...
-      cmd = 'node';
-      args = [CALLBACK_CLI, 'message', 'send',
-        '--channel', platform, '--target', target, '-m', message];
-    }
-
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (error) => {
-      if (error) {
-        if (attempt < maxRetries) {
-          console.error(`[Callback] Attempt ${attempt} failed, retry in 5s: ${error.message.slice(0, 100)}`);
-          setTimeout(trySend, 5000);
-        } else {
-          console.error(`[Callback] All ${maxRetries} attempts failed: ${error.message.slice(0, 200)}`);
-        }
-      } else {
-        console.log(`[Callback] Sent to ${platform} ${target}`);
-      }
-    });
-  }
-
-  trySend();
-  return true;
-}
+// [云端 OpenClaw 调用] 列出活跃会话
+app.get('/claude/sessions', auth, (req, res) => {
+  const sessions = Array.from(activeSessions.entries()).map(([sessionId, s]) => ({
+    sessionId,
+    lastActivity: s.lastActivity,
+    taskCount: s.taskCount || 0
+  }));
+  res.json({ sessions });
+});
 
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
   const TASK_EXPIRE_MS = 15 * 60 * 1000; // 未完成任务 15 分钟过期
   const RESULT_EXPIRE_MS = 30 * 60 * 1000; // 已完成结果保留 30 分钟
+  const SESSION_EXPIRE_MS = 30 * 60 * 1000; // 会话 30 分钟过期
 
   for (const [taskId, task] of tasks) {
     const age = now - task.createdAt;
@@ -321,6 +287,13 @@ setInterval(() => {
       // 无结果的过期任务（卡住或超时）
       tasks.delete(taskId);
       console.log(`[Cleanup] Task expired (no result): ${taskId}`);
+    }
+  }
+
+  // 清理过期会话
+  for (const [sessionId, session] of activeSessions) {
+    if (now - session.lastActivity > SESSION_EXPIRE_MS) {
+      activeSessions.delete(sessionId);
     }
   }
 }, 60000);

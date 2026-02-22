@@ -2,12 +2,14 @@
   "name": "openclaw-worker",
   "version": "1.0.0",
   "description": "OpenClaw 远程 Mac 执行方案 - 本地不开端口",
+  "type": "module",
   "scripts": {
     "server": "node server.js",
     "worker": "node worker.js",
     "test": "node mac-remote-tool.js"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "express": "^4.18.2"
   }
 }
