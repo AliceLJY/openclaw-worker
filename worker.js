@@ -373,7 +373,8 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
       sdkSessionId = sessionId;
     } else {
       // 不是终端会话 → 查映射表（worker 自己创建的会话）
-      sdkSessionId = sessionIdMap.get(sessionId) || sessionId;
+      // 映射表没有就是新任务，不要用 task-api 的 ID 去 resume（会失败）
+      sdkSessionId = sessionIdMap.get(sessionId) || null;
     }
   }
   const isResume = !!sdkSessionId;
