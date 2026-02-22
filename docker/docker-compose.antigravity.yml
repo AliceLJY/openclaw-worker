@@ -16,8 +16,7 @@ services:
       - ~/openclaw-workspace:/home/node/workspace
       # Patch: strip unsigned thinking blocks to fix Antigravity Claude multi-turn error
       - ~/.openclaw-antigravity/patches/messages.js:/app/node_modules/@mariozechner/pi-coding-agent/dist/core/messages.js:ro
-      # Patch: add claude-opus-4-6-thinking to google-antigravity model catalog
-      - ~/.openclaw-antigravity/patches/models.generated.js:/app/node_modules/@mariozechner/pi-ai/dist/models.generated.js:ro
+      # models.generated.js patch removed — Opus 4.6 already in pi-ai 0.53.0 (image 2026.2.19+)
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_ANTIGRAVITY_TOKEN:-antigravity-bot-token}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
