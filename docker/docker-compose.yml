@@ -44,6 +44,7 @@ services:
     volumes:
       - ../server.js:/app/server.js:ro  # 热补丁：修复清理逻辑 bug
       - /var/run/docker.sock:/var/run/docker.sock  # Callback: docker exec into bot containers
+      - ~/.claude/projects:/host-claude-projects:ro  # CC session files for /claude/recent
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
       - PORT=3456
