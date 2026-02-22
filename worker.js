@@ -230,6 +230,8 @@ const CC_LOG = '/tmp/cc-live.log';
 const ccSessions = new Set(); // 跟踪已创建的 CC 会话
 
 function executeClaudeCLI(prompt, timeout, sessionId) {
+    // [2026-02-22] 强制禁用 sessionId
+    sessionId = null;
   return new Promise((resolve) => {
     const startTime = Date.now();
     console.log(`[Claude CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
