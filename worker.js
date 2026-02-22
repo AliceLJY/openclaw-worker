@@ -320,7 +320,7 @@ function formatAssistantMessage(msg) {
 
   for (const block of msg.message.content) {
     if (block.type === 'text' && block.text) {
-      parts.push(block.text.slice(0, 500));
+      parts.push(block.text);
     } else if (block.type === 'tool_use') {
       if (SILENT_TOOLS.has(block.name)) continue;
       if (READ_ONLY_TOOLS.has(block.name)) continue;
