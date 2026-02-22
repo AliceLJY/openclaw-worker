@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-02-22] - Session 检测修复
+
+### Fixed
+- **Session ID 冲突**：Claude Code CLI 2.x 对 `--session-id`（新建）和 `--resume`（续接）做了严格区分。Worker 原先用内存 Set 跟踪 session 状态，重启后丢失 → 已有 session 被当新建 → 报错 "Session ID already in use"。改为检查磁盘 session 文件是否存在来判断
+- **stderr 日志**：CC 执行的 stderr 输出现在会写入 `/tmp/cc-live.log`（之前只记录 stdout）
+- **CLAUDECODE 环境变量**：spawn CC 子进程时显式清除 `CLAUDECODE` 环境变量，防止嵌套检测误判
+
+---
+
 ## [2026-02-07] - 架构更新
 
 ### Changed

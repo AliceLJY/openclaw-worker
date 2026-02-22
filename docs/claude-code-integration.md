@@ -224,8 +224,21 @@ if (data.exitCode === 0) {
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error |
+| 1 | General error (also: session ID conflict, see below) |
 | 143 | Timeout (SIGTERM) |
+
+### Session ID Conflict (Claude Code CLI 2.x)
+
+Since Claude Code CLI 2.x, `--session-id` and `--resume` have **strict semantics**:
+
+| Flag | Purpose | If session exists | If session doesn't exist |
+|------|---------|-------------------|--------------------------|
+| `--session-id UUID` | Create new session | **Error**: "Session ID already in use" | Creates session |
+| `--resume UUID` | Continue existing session | Resumes session | **Error**: "No conversation found" |
+
+The Worker detects which flag to use by checking whether the session file exists on disk (`~/.claude/projects/.../{UUID}.jsonl`), rather than relying on in-memory state (which is lost on Worker restart).
+
+> **中文说明**：CC CLI 2.x 对 `--session-id`（新建）和 `--resume`（续接）做了严格区分。Worker 通过检查磁盘上的 session 文件来判断用哪个 flag，避免了 Worker 重启后内存丢失导致的 session 冲突错误。
 
 ---
 
