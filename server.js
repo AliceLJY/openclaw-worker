@@ -267,6 +267,79 @@ app.get('/claude/sessions', auth, (req, res) => {
   res.json({ sessions });
 });
 
+// [本地调用] 列出最近的 CC 会话（含话题摘要）
+app.get('/claude/recent', auth, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+  const fs = await import('fs');
+  const path = await import('path');
+  const readline = await import('readline');
+
+  // 扫描 CC session 文件（容器内挂载路径，宿主机 ~/.claude/projects）
+  const projectsDir = '/host-claude-projects';
+  const sessions = [];
+
+  try {
+    const projectDirs = fs.default.readdirSync(projectsDir).filter(d =>
+      fs.default.statSync(path.join(projectsDir, d)).isDirectory()
+    );
+
+    for (const dir of projectDirs) {
+      const fullDir = path.join(projectsDir, dir);
+      const files = fs.default.readdirSync(fullDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .map(f => {
+          const fp = path.join(fullDir, f);
+          const stat = fs.default.statSync(fp);
+          return { file: f, path: fp, mtime: stat.mtimeMs, size: stat.size, project: dir };
+        });
+      sessions.push(...files);
+    }
+  } catch (e) {
+    return res.json({ sessions: [], error: e.message });
+  }
+
+  // 按修改时间倒序，取最近 N 个
+  sessions.sort((a, b) => b.mtime - a.mtime);
+  const recent = sessions.slice(0, limit);
+
+  // 提取每个会话的第一条 user 消息作为话题
+  const results = [];
+  for (const s of recent) {
+    let topic = '';
+    try {
+      const stream = fs.default.createReadStream(s.path, { encoding: 'utf8' });
+      const rl = readline.default.createInterface({ input: stream });
+      for await (const line of rl) {
+        try {
+          const d = JSON.parse(line);
+          if (d.message?.role === 'user') {
+            const content = d.message.content;
+            if (Array.isArray(content)) {
+              const txt = content.find(c => c.type === 'text');
+              if (txt) topic = txt.text.slice(0, 150);
+            } else if (typeof content === 'string') {
+              topic = content.slice(0, 150);
+            }
+            break;
+          }
+        } catch { /* skip malformed lines */ }
+      }
+      rl.close();
+      stream.destroy();
+    } catch { /* skip unreadable files */ }
+
+    results.push({
+      sessionId: s.file.replace('.jsonl', ''),
+      project: s.project,
+      lastModified: new Date(s.mtime).toISOString(),
+      sizeKB: Math.round(s.size / 1024),
+      topic: topic || '(no topic)',
+    });
+  }
+
+  res.json({ sessions: results });
+});
+
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
