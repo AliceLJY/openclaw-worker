@@ -1,6 +1,6 @@
 /**
- * 云端任务 API 服务
- * 部署在腾讯云服务器上，和 OpenClaw 一起跑
+ * 本地任务 API 服务
+ * 运行在 Docker 中，配合 Worker + CC Bridge 使用
  */
 
 import express from 'express';
@@ -221,7 +221,7 @@ app.post('/files/read', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId, callbackChannel } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackBotToken } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -237,6 +237,7 @@ app.post('/claude', auth, (req, res) => {
     timeout,
     sessionId: effectiveSessionId,
     callbackChannel: callbackChannel || null,
+    callbackBotToken: callbackBotToken || null,
     status: 'pending',
     createdAt: Date.now()
   };

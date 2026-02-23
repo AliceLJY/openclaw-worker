@@ -277,7 +277,8 @@ const DISCORD_PROXY = process.env.DISCORD_PROXY || 'http://127.0.0.1:7897';
  * 通过 HTTP 代理发送 Discord 消息（CONNECT 隧道）
  * 本机直连 discord.com 被墙，必须走代理
  */
-function discordPost(channelId, content) {
+function discordPost(channelId, content, botToken) {
+  const token = botToken || DISCORD_BOT_TOKEN;
   return new Promise((resolve, reject) => {
     const proxy = new URL(DISCORD_PROXY);
     const body = JSON.stringify({ content: content.slice(0, 2000) });
@@ -302,7 +303,7 @@ function discordPost(channelId, content) {
         path: `/api/v10/channels/${channelId}/messages`,
         method: 'POST',
         headers: {
-          'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+          'Authorization': `Bot ${token}`,
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
         },
@@ -327,7 +328,7 @@ function discordPost(channelId, content) {
   });
 }
 
-function notifyDiscord(callbackChannel, sessionId, text, prefix) {
+function notifyDiscord(callbackChannel, sessionId, text, prefix, botToken) {
   if (!callbackChannel) return;
 
   const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId.slice(0, 8)}\`` : '';
@@ -339,7 +340,7 @@ function notifyDiscord(callbackChannel, sessionId, text, prefix) {
 
   function trySend() {
     attempt++;
-    discordPost(callbackChannel, message).then(({ status, data }) => {
+    discordPost(callbackChannel, message, botToken).then(({ status, data }) => {
       if (status >= 200 && status < 300) {
         console.log(`[回调] 推送成功 (${prefix})`);
       } else if (attempt < maxRetries) {
@@ -676,11 +677,11 @@ function notifyCompletion(task, result) {
   if (result.exitCode !== 0) {
     // 失败时才加前缀，让用户知道出错了
     const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
-    notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ CC 失败（${duration}）`);
+    notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ CC 失败（${duration}）`, task.callbackBotToken);
   } else {
     // 成功：直接推 CC 输出，无包装
     const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
-    discordPost(task.callbackChannel, message).then(({ status }) => {
+    discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
       if (status >= 200 && status < 300) {
         console.log(`[回调] CC 输出已推送`);
       } else {
