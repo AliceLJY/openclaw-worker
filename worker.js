@@ -206,6 +206,33 @@ const liveSessions = new Map();   // sdkSessionId → { lastActivity, callbackCh
 const sessionIdMap = new Map();   // taskApiSessionId → sdkSessionId（映射表）
 const ccSessions = new Set();     // CLI 模式用：跟踪已创建的 CC 会话
 
+// 短 ID 前缀匹配：/cc-recent 显示 8 位截断 ID，resume 需要完整 UUID
+function resolveSessionPrefix(prefix) {
+  if (!prefix) return prefix;
+  // 已经是完整 UUID（含连字符 36 位，纯 hex 32 位）→ 直接返回
+  if (prefix.length >= 32) return prefix;
+
+  const sessionDir = path.join(process.env.HOME, '.claude', 'projects', '-Users-' + path.basename(process.env.HOME));
+  try {
+    const files = fs.readdirSync(sessionDir);
+    const matches = files.filter(f => f.startsWith(prefix) && f.endsWith('.jsonl'));
+    if (matches.length === 1) {
+      const fullId = matches[0].replace('.jsonl', '');
+      console.log(`[Session] 前缀匹配: ${prefix} → ${fullId}`);
+      return fullId;
+    } else if (matches.length > 1) {
+      // 多个匹配 → 取最近修改的
+      const sorted = matches
+        .map(f => ({ file: f, mtime: fs.statSync(path.join(sessionDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+      const fullId = sorted[0].file.replace('.jsonl', '');
+      console.log(`[Session] 前缀 ${prefix} 匹配到 ${matches.length} 个会话，取最新: ${fullId}`);
+      return fullId;
+    }
+  } catch { /* 目录不存在 */ }
+  return prefix; // 没找到，返回原值让下游处理
+}
+
 function loadSessions() {
   try {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
@@ -709,6 +736,8 @@ async function executeTask(task) {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [文件读取] ${taskId}... - ${task.path}`);
       result = await readFileFromDisk(task.path);
     } else if (task.type === 'claude-cli') {
+      // 短 ID 前缀解析（/cc-recent 显示 8 位，用户照抄后需要还原完整 UUID）
+      if (task.sessionId) task.sessionId = resolveSessionPrefix(task.sessionId);
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
       // ack 已由 cc-bridge registerCommand 处理，worker 不再重复推
       if (sdkQuery) {
