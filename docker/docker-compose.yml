@@ -47,6 +47,7 @@ services:
       - ~/.claude/projects:/host-claude-projects:ro  # CC session files for /claude/recent
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - PORT=3456
       - CALLBACK_CONTAINER=openclaw-gateway  # Default: 睿智bot; per-request callbackContainer overrides
     networks:
