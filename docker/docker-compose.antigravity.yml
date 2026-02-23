@@ -5,7 +5,7 @@
 services:
   # Antigravity Bot 网关服务
   openclaw-antigravity:
-    image: ghcr.io/openclaw/openclaw:2026.2.19
+    image: ghcr.io/openclaw/openclaw:2026.2.22
     container_name: openclaw-antigravity
     restart: always
     ports:
@@ -37,7 +37,7 @@ services:
 
   # CLI 工具（按需启动）
   openclaw-antigravity-cli:
-    image: ghcr.io/openclaw/openclaw:2026.2.19
+    image: ghcr.io/openclaw/openclaw:2026.2.22
     container_name: openclaw-antigravity-cli
     profiles: ["cli"]
     volumes:
