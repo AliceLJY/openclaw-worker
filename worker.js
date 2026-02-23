@@ -427,28 +427,44 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
   // 如果是，直接用它做 resume，不走 sessionIdMap（避免脏映射覆盖）
   let sdkSessionId = null;
   if (sessionId) {
-    const sessionFile = path.join(process.env.HOME, '.claude', 'projects', '-Users-' + path.basename(process.env.HOME), sessionId + '.jsonl');
+    const projectDir = path.join(process.env.HOME, '.claude', 'projects', '-Users-' + path.basename(process.env.HOME));
+    const sessionFile = path.join(projectDir, sessionId + '.jsonl');
     if (fs.existsSync(sessionFile)) {
       // 真实 CC session 文件存在 → 直接 resume 这个终端会话
       sdkSessionId = sessionId;
     } else {
-      // 不是终端会话 → 先查内存映射表，没有则从文件重新加载（应对 worker 重启/多进程）
-      sdkSessionId = sessionIdMap.get(sessionId) || null;
-      if (!sdkSessionId) {
-        // 从文件重新加载映射（其他 worker 进程可能已写入）
+      // 精确文件不存在 → 先尝试短 ID 前缀匹配
+      if (!sessionId.includes('-') || sessionId.length < 36) {
         try {
-          const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-          for (const s of data) {
-            if (s.taskApiId && s.sessionId) {
-              sessionIdMap.set(s.taskApiId, s.sessionId);
-              if (!liveSessions.has(s.sessionId)) {
-                liveSessions.set(s.sessionId, { lastActivity: s.lastActivity, callbackChannel: s.callbackChannel });
+          const matches = fs.readdirSync(projectDir)
+            .filter(f => f.startsWith(sessionId) && f.endsWith('.jsonl'));
+          if (matches.length === 1) {
+            sdkSessionId = matches[0].replace('.jsonl', '');
+            console.log(`[SDK] 短 ID 前缀匹配: ${sessionId} → ${sdkSessionId.slice(0, 8)}...`);
+          } else if (matches.length > 1) {
+            console.warn(`[SDK] 短 ID ${sessionId} 匹配到 ${matches.length} 个 session，跳过`);
+          }
+        } catch { /* projectDir 不存在 */ }
+      }
+      // 前缀也没匹配到 → 走 sessionIdMap 映射
+      if (!sdkSessionId) {
+        sdkSessionId = sessionIdMap.get(sessionId) || null;
+        if (!sdkSessionId) {
+          // 从文件重新加载映射（其他 worker 进程可能已写入）
+          try {
+            const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+            for (const s of data) {
+              if (s.taskApiId && s.sessionId) {
+                sessionIdMap.set(s.taskApiId, s.sessionId);
+                if (!liveSessions.has(s.sessionId)) {
+                  liveSessions.set(s.sessionId, { lastActivity: s.lastActivity, callbackChannel: s.callbackChannel });
+                }
               }
             }
-          }
-          sdkSessionId = sessionIdMap.get(sessionId) || null;
-          if (sdkSessionId) console.log(`[SDK] 从文件恢复映射: API:${sessionId.slice(0, 8)} → SDK:${sdkSessionId.slice(0, 8)}`);
-        } catch { /* 文件不存在或格式错误 */ }
+            sdkSessionId = sessionIdMap.get(sessionId) || null;
+            if (sdkSessionId) console.log(`[SDK] 从文件恢复映射: API:${sessionId.slice(0, 8)} → SDK:${sdkSessionId.slice(0, 8)}`);
+          } catch { /* 文件不存在或格式错误 */ }
+        }
       }
     }
   }
