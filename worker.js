@@ -269,61 +269,93 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ========== Discord 推送（直接 API，绕过 AntiBot LLM） ==========
+// ========== Discord 推送（通过代理，绕过 AntiBot LLM） ==========
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const DISCORD_PROXY = process.env.DISCORD_PROXY || 'http://127.0.0.1:7897';
+
+/**
+ * 通过 HTTP 代理发送 Discord 消息（CONNECT 隧道）
+ * 本机直连 discord.com 被墙，必须走代理
+ */
+function discordPost(channelId, content) {
+  return new Promise((resolve, reject) => {
+    const proxy = new URL(DISCORD_PROXY);
+    const body = JSON.stringify({ content: content.slice(0, 2000) });
+
+    // 第一步：通过代理建立 CONNECT 隧道
+    const connectReq = http.request({
+      host: proxy.hostname,
+      port: proxy.port,
+      method: 'CONNECT',
+      path: 'discord.com:443',
+    });
+
+    connectReq.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`Proxy CONNECT ${res.statusCode}`));
+        return;
+      }
+
+      // 第二步：通过隧道发 HTTPS 请求
+      const req = https.request({
+        hostname: 'discord.com',
+        path: `/api/v10/channels/${channelId}/messages`,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+        socket,
+        agent: false,
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve({ status: res.statusCode, data }));
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+
+    connectReq.on('error', reject);
+    connectReq.setTimeout(10000, () => {
+      connectReq.destroy();
+      reject(new Error('Proxy connect timeout'));
+    });
+    connectReq.end();
+  });
+}
 
 function notifyDiscord(callbackChannel, sessionId, text, prefix) {
   if (!callbackChannel) return;
 
   const sessionInfo = sessionId ? `\n📎 sessionId: \`${sessionId.slice(0, 8)}\`` : '';
   let message = `**${prefix}**${sessionInfo}\n\n${text}`;
-
-  // Discord 消息上限 2000 字符
-  if (message.length > 2000) {
-    message = message.slice(0, 1997) + '...';
-  }
+  if (message.length > 2000) message = message.slice(0, 1997) + '...';
 
   const maxRetries = 3;
   let attempt = 0;
 
   function trySend() {
     attempt++;
-    const body = JSON.stringify({ content: message });
-    const req = https.request({
-      hostname: 'discord.com',
-      path: `/api/v10/channels/${callbackChannel}/messages`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          console.log(`[回调] 直接推送到 Discord (${prefix})`);
-        } else if (attempt < maxRetries) {
-          console.error(`[回调] 第${attempt}次发送失败 (${res.statusCode})，5s 后重试: ${data.slice(0, 100)}`);
-          setTimeout(trySend, 5000);
-        } else {
-          console.error(`[回调] ${maxRetries}次均失败 (${res.statusCode}): ${data.slice(0, 200)}`);
-        }
-      });
-    });
-
-    req.on('error', (error) => {
-      if (attempt < maxRetries) {
-        console.error(`[回调] 第${attempt}次网络错误，5s 后重试: ${error.message}`);
+    discordPost(callbackChannel, message).then(({ status, data }) => {
+      if (status >= 200 && status < 300) {
+        console.log(`[回调] 推送成功 (${prefix})`);
+      } else if (attempt < maxRetries) {
+        console.error(`[回调] 第${attempt}次失败 (${status})，5s 后重试`);
         setTimeout(trySend, 5000);
       } else {
-        console.error(`[回调] ${maxRetries}次均失败: ${error.message}`);
+        console.error(`[回调] ${maxRetries}次均失败 (${status}): ${data.slice(0, 100)}`);
+      }
+    }).catch(err => {
+      if (attempt < maxRetries) {
+        console.error(`[回调] 第${attempt}次错误，5s 后重试: ${err.message}`);
+        setTimeout(trySend, 5000);
+      } else {
+        console.error(`[回调] ${maxRetries}次均失败: ${err.message}`);
       }
     });
-
-    req.write(body);
-    req.end();
   }
 
   trySend();
@@ -650,30 +682,13 @@ function notifyCompletion(task, result) {
   } else {
     // 成功：直接推 CC 输出，无包装
     const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
-    const body = JSON.stringify({ content: message });
-    const req = https.request({
-      hostname: 'discord.com',
-      path: `/api/v10/channels/${task.callbackChannel}/messages`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          console.log(`[回调] CC 输出已推送`);
-        } else {
-          console.error(`[回调] 推送失败 (${res.statusCode}): ${data.slice(0, 100)}`);
-        }
-      });
-    });
-    req.on('error', (err) => console.error(`[回调] 推送错误: ${err.message}`));
-    req.write(body);
-    req.end();
+    discordPost(task.callbackChannel, message).then(({ status }) => {
+      if (status >= 200 && status < 300) {
+        console.log(`[回调] CC 输出已推送`);
+      } else {
+        console.error(`[回调] 推送失败 (${status})`);
+      }
+    }).catch(err => console.error(`[回调] 推送错误: ${err.message}`));
   }
 }
 
