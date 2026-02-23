@@ -625,17 +625,41 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
 function notifyCompletion(task, result) {
   if (task.type !== 'claude-cli' || !task.callbackChannel) return;
 
-  const summary = (result.stdout || '').slice(-1500) || '(无输出)';
-  const status = result.exitCode === 0 ? '完成' : '失败';
-  const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
+  const output = (result.stdout || '').slice(-1800) || '(无输出)';
 
-  const prefix = result.exitCode === 0
-    ? `✅ CC 任务${status}（耗时 ${duration}）`
-    : `❌ CC 任务${status}（耗时 ${duration}）`;
-
-  // 统一用 task-api 的 sessionId（用户看到的始终是同一个 ID）
-  // worker 内部自动做 task-api ID → CC SDK ID 的映射
-  notifyDiscord(task.callbackChannel, task.sessionId, summary, prefix);
+  // 只推 CC 纯输出，不加状态前缀，像直接和 CC 聊天
+  if (result.exitCode !== 0) {
+    // 失败时才加前缀，让用户知道出错了
+    const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
+    notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ CC 失败（${duration}）`);
+  } else {
+    // 成功：直接推 CC 输出，无包装
+    const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
+    const body = JSON.stringify({ content: message });
+    const req = https.request({
+      hostname: 'discord.com',
+      path: `/api/v10/channels/${task.callbackChannel}/messages`,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log(`[回调] CC 输出已推送`);
+        } else {
+          console.error(`[回调] 推送失败 (${res.statusCode}): ${data.slice(0, 100)}`);
+        }
+      });
+    });
+    req.on('error', (err) => console.error(`[回调] 推送错误: ${err.message}`));
+    req.write(body);
+    req.end();
+  }
 }
 
 // ========== 并发任务管理 ==========
@@ -657,9 +681,7 @@ async function executeTask(task) {
       result = await readFileFromDisk(task.path);
     } else if (task.type === 'claude-cli') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
-      // 立即直推 ack 到 Discord，不经过 AntiBot LLM
-      notifyDiscord(task.callbackChannel, task.sessionId,
-        `"${(task.prompt || '').slice(0, 80)}..."`, '📨 已收到，CC 启动中');
+      // ack 已由 cc-bridge registerCommand 处理，worker 不再重复推
       if (sdkQuery) {
         result = await executeClaudeSDK(task.prompt, task.timeout, task.sessionId, task.callbackChannel);
       } else {
