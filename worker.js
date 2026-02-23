@@ -633,7 +633,9 @@ function notifyCompletion(task, result) {
     ? `✅ CC 任务${status}（耗时 ${duration}）`
     : `❌ CC 任务${status}（耗时 ${duration}）`;
 
-  notifyDiscord(task.callbackChannel, result.metadata?.sessionId, summary, prefix);
+  // 统一用 task-api 的 sessionId（用户看到的始终是同一个 ID）
+  // worker 内部自动做 task-api ID → CC SDK ID 的映射
+  notifyDiscord(task.callbackChannel, task.sessionId, summary, prefix);
 }
 
 // ========== 并发任务管理 ==========

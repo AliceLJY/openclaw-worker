@@ -255,6 +255,38 @@ app.post('/claude', auth, (req, res) => {
   res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
 
+// ========== Discord 消息推送 ==========
+
+// 让 cc-bridge hook 推消息到 Discord（hook 自己在容器里无法直推）
+app.post('/notify', auth, async (req, res) => {
+  const { channel, message } = req.body;
+  if (!channel || !message) {
+    return res.status(400).json({ error: 'channel and message are required' });
+  }
+  const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+  if (!DISCORD_BOT_TOKEN) {
+    return res.status(500).json({ error: 'DISCORD_BOT_TOKEN not set' });
+  }
+  try {
+    const resp = await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: message.slice(0, 2000) }),
+    });
+    if (resp.ok) {
+      res.json({ ok: true });
+    } else {
+      const text = await resp.text();
+      res.status(502).json({ error: `Discord ${resp.status}: ${text}` });
+    }
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // ========== 会话管理 API ==========
 
 // [云端 OpenClaw 调用] 列出活跃会话
