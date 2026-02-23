@@ -372,9 +372,24 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
       // 真实 CC session 文件存在 → 直接 resume 这个终端会话
       sdkSessionId = sessionId;
     } else {
-      // 不是终端会话 → 查映射表（worker 自己创建的会话）
-      // 映射表没有就是新任务，不要用 task-api 的 ID 去 resume（会失败）
+      // 不是终端会话 → 先查内存映射表，没有则从文件重新加载（应对 worker 重启/多进程）
       sdkSessionId = sessionIdMap.get(sessionId) || null;
+      if (!sdkSessionId) {
+        // 从文件重新加载映射（其他 worker 进程可能已写入）
+        try {
+          const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+          for (const s of data) {
+            if (s.taskApiId && s.sessionId) {
+              sessionIdMap.set(s.taskApiId, s.sessionId);
+              if (!liveSessions.has(s.sessionId)) {
+                liveSessions.set(s.sessionId, { lastActivity: s.lastActivity, callbackChannel: s.callbackChannel });
+              }
+            }
+          }
+          sdkSessionId = sessionIdMap.get(sessionId) || null;
+          if (sdkSessionId) console.log(`[SDK] 从文件恢复映射: API:${sessionId.slice(0, 8)} → SDK:${sdkSessionId.slice(0, 8)}`);
+        } catch { /* 文件不存在或格式错误 */ }
+      }
     }
   }
   const isResume = !!sdkSessionId;
