@@ -734,6 +734,6 @@ Built by **小试AI** ([@AliceLJY](https://github.com/AliceLJY)) · WeChat: **�
 
 Four content pillars: **Hands-on AI** · **AI Pitfall Diaries** · **AI & Humanity** · **AI Gallery**
 
-Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill)
+Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [openclaw-cc-bridge](https://github.com/AliceLJY/openclaw-cc-bridge) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill)
 
 <img src="./assets/wechat_qr.jpg" width="200" alt="WeChat QR Code">
