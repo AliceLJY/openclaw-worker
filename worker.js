@@ -449,9 +449,7 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
   let capturedSessionId = sessionId || null;
 
   function flush() {
-    if (buffer.length === 0) return;
-    const text = buffer.join('\n').slice(-1500);
-    notifyDiscord(callbackChannel, capturedSessionId, text, '📡 CC 工作中');
+    // 不推流式进度到 Discord，保持干净的聊天体验
     buffer = [];
     debounceTimer = null;
   }
