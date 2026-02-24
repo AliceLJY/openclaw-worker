@@ -11,6 +11,9 @@ services:
       - "18794:18790"  # Bridge
     volumes:
       - ~/.openclaw-twin:/home/node/.openclaw
+      - /var/run/docker.sock:/var/run/docker.sock  # Mechanic: 管理其他容器
+    group_add:
+      - "0"  # root group → 允许 node 用户访问 Docker socket
     environment:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TWIN_TOKEN:-twin-bot-token}
       - OPENCLAW_GATEWAY_HOST=0.0.0.0
