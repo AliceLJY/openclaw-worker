@@ -474,6 +474,7 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
 
   // 构建 options（resume 也需要权限配置，否则子进程立即退出）
   const baseOptions = {
+    model: 'claude-opus-4-6',
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     cwd: process.env.HOME,
@@ -616,7 +617,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
       }
     }
 
-    const shellCmd = `${CLAUDE_PATH} --print${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
+    const shellCmd = `${CLAUDE_PATH} --print --model claude-opus-4-6${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
     console.log(`[Claude CLI] 命令: ${shellCmd}`);
 
     // 写入实时日志
