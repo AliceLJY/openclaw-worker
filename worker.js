@@ -420,7 +420,7 @@ function formatAssistantMessage(msg) {
 }
 
 // ========== Agent SDK 执行 ==========
-async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
+async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, model) {
   const startTime = Date.now();
 
   // 判断 sessionId 是否对应一个真实的 CC session 文件（终端开的会话）
@@ -473,8 +473,9 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
   console.log(`[SDK] ${isResume ? '续接' : '新建'}会话: "${prompt.slice(0, 50)}..."${sessionId ? ' [API:' + sessionId.slice(0, 8) + (sdkSessionId ? ' → SDK:' + sdkSessionId.slice(0, 8) : '') + ']' : ''}`);
 
   // 构建 options（resume 也需要权限配置，否则子进程立即退出）
+  // model 由调用方传入，支持 fallback 重试
   const baseOptions = {
-    model: 'claude-opus-4-6',
+    model: model || 'claude-opus-4-6',
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     cwd: process.env.HOME,
@@ -601,10 +602,11 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel) {
 const CLAUDE_PATH = '/opt/homebrew/bin/claude';
 const CC_LOG = '/tmp/cc-live.log';
 
-function executeClaudeCLI(prompt, timeout, sessionId) {
+function executeClaudeCLI(prompt, timeout, sessionId, model) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Claude CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
+    const useModel = model || 'claude-opus-4-6';
+    console.log(`[Claude CLI] 执行 [${useModel}]: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
 
     // 构建会话参数：已有会话用 --resume，新会话用 --session-id
     let sessionFlag = '';
@@ -617,7 +619,7 @@ function executeClaudeCLI(prompt, timeout, sessionId) {
       }
     }
 
-    const shellCmd = `${CLAUDE_PATH} --print --model claude-opus-4-6${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
+    const shellCmd = `${CLAUDE_PATH} --print --model ${useModel}${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
     console.log(`[Claude CLI] 命令: ${shellCmd}`);
 
     // 写入实时日志
@@ -757,10 +759,23 @@ async function executeTask(task) {
       if (task.sessionId) task.sessionId = resolveSessionPrefix(task.sessionId);
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
       // ack 已由 cc-bridge registerCommand 处理，worker 不再重复推
-      if (sdkQuery) {
-        result = await executeClaudeSDK(task.prompt, task.timeout, task.sessionId, task.callbackChannel);
-      } else {
-        result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId);
+      // CC 模型 fallback：Opus → Sonnet → 不指定（用 CC 默认）
+      const CC_MODELS = ['claude-opus-4-6', 'claude-sonnet-4-6'];
+      for (let i = 0; i < CC_MODELS.length; i++) {
+        const model = CC_MODELS[i];
+        try {
+          if (sdkQuery) {
+            result = await executeClaudeSDK(task.prompt, task.timeout, task.sessionId, task.callbackChannel, model);
+          } else {
+            result = await executeClaudeCLI(task.prompt, task.timeout, task.sessionId, model);
+          }
+          // 成功或正常退出（exitCode 非 0 也算完成，不重试）
+          break;
+        } catch (err) {
+          const isLast = i === CC_MODELS.length - 1;
+          console.warn(`[CC Fallback] ${model} 失败: ${err.message}${isLast ? '' : '，降级 ' + CC_MODELS[i + 1]}`);
+          if (isLast) throw err;
+        }
       }
     } else {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
