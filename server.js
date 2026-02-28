@@ -217,6 +217,32 @@ app.post('/files/read', auth, (req, res) => {
   res.json({ taskId, message: 'File read task created' });
 });
 
+// [云端 OpenClaw 调用] 编辑文件（局部替换）
+app.post('/files/edit', auth, (req, res) => {
+  const { path, old_string, new_string, replace_all = false } = req.body;
+
+  if (!path || old_string === undefined || new_string === undefined) {
+    return res.status(400).json({ error: 'path, old_string, new_string are required' });
+  }
+
+  const taskId = crypto.randomUUID();
+  const task = {
+    id: taskId,
+    type: 'file-edit',
+    path,
+    oldString: old_string,
+    newString: new_string,
+    replaceAll: replace_all,
+    status: 'pending',
+    createdAt: Date.now()
+  };
+
+  tasks.set(taskId, task);
+  console.log(`[File] Edit: ${taskId} - ${path}`);
+
+  res.json({ taskId, message: 'File edit task created' });
+});
+
 // ========== Claude CLI API（调用本地 Claude Code） ==========
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
