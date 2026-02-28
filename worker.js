@@ -57,6 +57,7 @@ console.log('支持的任务类型:');
 console.log('  - command: 执行 shell 命令');
 console.log('  - file-read: 读取文件');
 console.log('  - file-write: 写入文件');
+console.log('  - file-edit: 编辑文件（局部替换）');
 console.log('  - claude-cli: 调用本地 Claude Code (SDK/CLI)');
 console.log('');
 
@@ -185,6 +186,67 @@ function readFileFromDisk(filePath) {
       const content = fs.readFileSync(fullPath, 'utf8');
       resolve({
         stdout: content,
+        stderr: '',
+        exitCode: 0,
+        error: null
+      });
+    } catch (err) {
+      resolve({
+        stdout: '',
+        stderr: err.message,
+        exitCode: 1,
+        error: err.message
+      });
+    }
+  });
+}
+
+function editFileOnDisk(filePath, oldString, newString, replaceAll) {
+  return new Promise((resolve) => {
+    try {
+      const fullPath = expandHome(filePath.trim());
+      console.log(`[编辑] ${fullPath}`);
+
+      if (!fs.existsSync(fullPath)) {
+        return resolve({
+          stdout: '',
+          stderr: `File not found: ${fullPath}`,
+          exitCode: 1,
+          error: 'File not found'
+        });
+      }
+
+      let content = fs.readFileSync(fullPath, 'utf8');
+
+      if (!content.includes(oldString)) {
+        return resolve({
+          stdout: '',
+          stderr: `old_string not found in ${fullPath}`,
+          exitCode: 1,
+          error: 'old_string not found'
+        });
+      }
+
+      if (!replaceAll) {
+        // 非全局替换时，检查 old_string 是否唯一
+        const count = content.split(oldString).length - 1;
+        if (count > 1) {
+          return resolve({
+            stdout: '',
+            stderr: `old_string found ${count} times in ${fullPath}, use replace_all or provide more context`,
+            exitCode: 1,
+            error: 'old_string not unique'
+          });
+        }
+      }
+
+      content = replaceAll
+        ? content.split(oldString).join(newString)
+        : content.replace(oldString, newString);
+
+      fs.writeFileSync(fullPath, content);
+      resolve({
+        stdout: `File edited: ${fullPath}`,
         stderr: '',
         exitCode: 0,
         error: null
@@ -754,6 +816,9 @@ async function executeTask(task) {
     } else if (task.type === 'file-read') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [文件读取] ${taskId}... - ${task.path}`);
       result = await readFileFromDisk(task.path);
+    } else if (task.type === 'file-edit') {
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [文件编辑] ${taskId}... - ${task.path}`);
+      result = await editFileOnDisk(task.path, task.oldString, task.newString, task.replaceAll);
     } else if (task.type === 'claude-cli') {
       // 短 ID 前缀解析（/cc-recent 显示 8 位，用户照抄后需要还原完整 UUID）
       if (task.sessionId) task.sessionId = resolveSessionPrefix(task.sessionId);
