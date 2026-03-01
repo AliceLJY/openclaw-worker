@@ -282,6 +282,60 @@ app.post('/claude', auth, (req, res) => {
   res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
 
+// ========== Codex / Gemini CLI API ==========
+
+// [Discord cc-bridge 调用] 提交 Codex CLI 任务
+app.post('/codex', auth, (req, res) => {
+  const { prompt, timeout = 300000, callbackChannel, callbackBotToken } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+
+  const taskId = crypto.randomUUID();
+  const task = {
+    id: taskId,
+    type: 'codex-cli',
+    prompt,
+    timeout,
+    callbackChannel: callbackChannel || null,
+    callbackBotToken: callbackBotToken || null,
+    status: 'pending',
+    createdAt: Date.now()
+  };
+
+  tasks.set(taskId, task);
+  console.log(`[Codex] Task: ${taskId}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+
+  res.json({ taskId, message: 'Codex CLI task created' });
+});
+
+// [Discord cc-bridge 调用] 提交 Gemini CLI 任务
+app.post('/gemini', auth, (req, res) => {
+  const { prompt, timeout = 300000, callbackChannel, callbackBotToken } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+
+  const taskId = crypto.randomUUID();
+  const task = {
+    id: taskId,
+    type: 'gemini-cli',
+    prompt,
+    timeout,
+    callbackChannel: callbackChannel || null,
+    callbackBotToken: callbackBotToken || null,
+    status: 'pending',
+    createdAt: Date.now()
+  };
+
+  tasks.set(taskId, task);
+  console.log(`[Gemini] Task: ${taskId}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+
+  res.json({ taskId, message: 'Gemini CLI task created' });
+});
+
 // ========== Discord 消息推送 ==========
 
 // 让 cc-bridge hook 推消息到 Discord（hook 自己在容器里无法直推）

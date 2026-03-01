@@ -59,6 +59,8 @@ console.log('  - file-read: 读取文件');
 console.log('  - file-write: 写入文件');
 console.log('  - file-edit: 编辑文件（局部替换）');
 console.log('  - claude-cli: 调用本地 Claude Code (SDK/CLI)');
+console.log('  - codex-cli: 调用本地 Codex CLI');
+console.log('  - gemini-cli: 调用本地 Gemini CLI');
 console.log('');
 
 // ========== HTTP 请求封装 ==========
@@ -660,6 +662,110 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, mod
   };
 }
 
+// ========== Codex CLI 执行 ==========
+function executeCodexCLI(prompt, timeout) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    console.log(`[Codex CLI] 执行: "${prompt.slice(0, 50)}..."`);
+
+    const shellCmd = `/opt/homebrew/bin/codex exec "${prompt.replace(/"/g, '\\"')}"`;
+    const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
+      cwd: process.env.HOME,
+      env: {
+        ...process.env,
+        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
+        HOME: process.env.HOME
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    const effectiveTimeout = (timeout || CONFIG.defaultTimeout) + 30000;
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({
+        stdout, stderr: 'Timeout', exitCode: -1,
+        error: 'Timeout', duration: Date.now() - startTime
+      });
+    }, effectiveTimeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const duration = Date.now() - startTime;
+      console.log(`[Codex CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节`);
+      resolve({
+        stdout: stdout.trim(), stderr: stderr.trim(),
+        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration
+      });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        stdout, stderr: err.message, exitCode: -1,
+        error: err.message, duration: Date.now() - startTime
+      });
+    });
+  });
+}
+
+// ========== Gemini CLI 执行 ==========
+function executeGeminiCLI(prompt, timeout) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    console.log(`[Gemini CLI] 执行: "${prompt.slice(0, 50)}..."`);
+
+    const shellCmd = `/opt/homebrew/bin/gemini -p "${prompt.replace(/"/g, '\\"')}" -o text --sandbox=false`;
+    const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
+      cwd: process.env.HOME,
+      env: {
+        ...process.env,
+        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
+        HOME: process.env.HOME
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    const effectiveTimeout = (timeout || CONFIG.defaultTimeout) + 30000;
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({
+        stdout, stderr: 'Timeout', exitCode: -1,
+        error: 'Timeout', duration: Date.now() - startTime
+      });
+    }, effectiveTimeout);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const duration = Date.now() - startTime;
+      console.log(`[Gemini CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节`);
+      resolve({
+        stdout: stdout.trim(), stderr: stderr.trim(),
+        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration
+      });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        stdout, stderr: err.message, exitCode: -1,
+        error: err.message, duration: Date.now() - startTime
+      });
+    });
+  });
+}
+
 // ========== CLI 回退执行（原有逻辑） ==========
 const CLAUDE_PATH = '/opt/homebrew/bin/claude';
 const CC_LOG = '/tmp/cc-live.log';
@@ -776,22 +882,23 @@ function executeClaudeCLI(prompt, timeout, sessionId, model) {
 }
 
 // ========== 完成通知（最终结果推 Discord） ==========
-function notifyCompletion(task, result) {
-  if (task.type !== 'claude-cli' || !task.callbackChannel) return;
+const CLI_TASK_TYPES = new Set(['claude-cli', 'codex-cli', 'gemini-cli']);
+const CLI_LABELS = { 'claude-cli': 'CC', 'codex-cli': 'Codex', 'gemini-cli': 'Gemini' };
 
+function notifyCompletion(task, result) {
+  if (!CLI_TASK_TYPES.has(task.type) || !task.callbackChannel) return;
+
+  const label = CLI_LABELS[task.type] || task.type;
   const output = (result.stdout || '').slice(-1800) || '(无输出)';
 
-  // 只推 CC 纯输出，不加状态前缀，像直接和 CC 聊天
   if (result.exitCode !== 0) {
-    // 失败时才加前缀，让用户知道出错了
     const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
-    notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ CC 失败（${duration}）`, task.callbackBotToken);
+    notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ ${label} 失败（${duration}）`, task.callbackBotToken);
   } else {
-    // 成功：直接推 CC 输出，无包装
     const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
     discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
       if (status >= 200 && status < 300) {
-        console.log(`[回调] CC 输出已推送`);
+        console.log(`[回调] ${label} 输出已推送`);
       } else {
         console.error(`[回调] 推送失败 (${status})`);
       }
@@ -842,6 +949,12 @@ async function executeTask(task) {
           if (isLast) throw err;
         }
       }
+    } else if (task.type === 'codex-cli') {
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
+      result = await executeCodexCLI(task.prompt, task.timeout);
+    } else if (task.type === 'gemini-cli') {
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
+      result = await executeGeminiCLI(task.prompt, task.timeout);
     } else {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
       result = await executeCommand(task.command, task.timeout);
