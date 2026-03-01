@@ -668,7 +668,8 @@ function executeCodexCLI(prompt, timeout) {
     const startTime = Date.now();
     console.log(`[Codex CLI] 执行: "${prompt.slice(0, 50)}..."`);
 
-    const shellCmd = `/opt/homebrew/bin/codex exec "${prompt.replace(/"/g, '\\"')}"`;
+    const shellCmd = `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto "${prompt.replace(/"/g, '\\"')}"`;
+
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
       cwd: process.env.HOME,
       env: {
