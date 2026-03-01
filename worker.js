@@ -662,13 +662,16 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, mod
   };
 }
 
-// ========== Codex CLI 执行 ==========
-function executeCodexCLI(prompt, timeout) {
+// ========== Codex CLI 执行（支持 session 续接）==========
+function executeCodexCLI(prompt, timeout, sessionId) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Codex CLI] 执行: "${prompt.slice(0, 50)}..."`);
+    console.log(`[Codex CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    const shellCmd = `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto "${prompt.replace(/"/g, '\\"')}"`;
+    const escapedPrompt = prompt.replace(/"/g, '\\"');
+    const shellCmd = sessionId
+      ? `/opt/homebrew/bin/codex exec resume --skip-git-repo-check --full-auto "${sessionId}" "${escapedPrompt}"`
+      : `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto "${escapedPrompt}"`;
 
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
       cwd: process.env.HOME,
@@ -698,10 +701,14 @@ function executeCodexCLI(prompt, timeout) {
     child.on('close', (code) => {
       clearTimeout(timer);
       const duration = Date.now() - startTime;
-      console.log(`[Codex CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节`);
+      // 从 stderr 提取 session id（格式：session id: <uuid>）
+      const sessionMatch = stderr.match(/session id:\s*([a-f0-9-]+)/i);
+      const capturedSessionId = sessionMatch ? sessionMatch[1] : null;
+      console.log(`[Codex CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节${capturedSessionId ? '，session:' + capturedSessionId.slice(0, 8) : ''}`);
       resolve({
         stdout: stdout.trim(), stderr: stderr.trim(),
-        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration
+        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration,
+        metadata: capturedSessionId ? { sessionId: capturedSessionId } : undefined
       });
     });
 
@@ -715,13 +722,16 @@ function executeCodexCLI(prompt, timeout) {
   });
 }
 
-// ========== Gemini CLI 执行 ==========
-function executeGeminiCLI(prompt, timeout) {
+// ========== Gemini CLI 执行（支持 session 续接）==========
+function executeGeminiCLI(prompt, timeout, sessionId) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Gemini CLI] 执行: "${prompt.slice(0, 50)}..."`);
+    console.log(`[Gemini CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    const shellCmd = `/opt/homebrew/bin/gemini -p "${prompt.replace(/"/g, '\\"')}" -o text --sandbox=false`;
+    const escapedPrompt = prompt.replace(/"/g, '\\"');
+    // 用 json 输出以获取 session_id；有 sessionId 时加 --resume
+    const resumeFlag = sessionId ? ` --resume "${sessionId}"` : '';
+    const shellCmd = `/opt/homebrew/bin/gemini${resumeFlag} -p "${escapedPrompt}" -o json --sandbox=false`;
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
       cwd: process.env.HOME,
       env: {
@@ -750,10 +760,19 @@ function executeGeminiCLI(prompt, timeout) {
     child.on('close', (code) => {
       clearTimeout(timer);
       const duration = Date.now() - startTime;
-      console.log(`[Gemini CLI] 完成，耗时 ${duration}ms，输出 ${stdout.length} 字节`);
+      // 从 json 输出提取 session_id 和 response
+      let capturedSessionId = null;
+      let responseText = stdout.trim();
+      try {
+        const json = JSON.parse(stdout);
+        capturedSessionId = json.session_id || null;
+        responseText = json.response || responseText;
+      } catch {}
+      console.log(`[Gemini CLI] 完成，耗时 ${duration}ms，输出 ${responseText.length} 字节${capturedSessionId ? '，session:' + capturedSessionId.slice(0, 8) : ''}`);
       resolve({
-        stdout: stdout.trim(), stderr: stderr.trim(),
-        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration
+        stdout: responseText, stderr: stderr.trim(),
+        exitCode: code || 0, error: code ? `Exit code ${code}` : null, duration,
+        metadata: capturedSessionId ? { sessionId: capturedSessionId } : undefined
       });
     });
 
@@ -951,11 +970,11 @@ async function executeTask(task) {
         }
       }
     } else if (task.type === 'codex-cli') {
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
-      result = await executeCodexCLI(task.prompt, task.timeout);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}...${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
+      result = await executeCodexCLI(task.prompt, task.timeout, task.sessionId);
     } else if (task.type === 'gemini-cli') {
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
-      result = await executeGeminiCLI(task.prompt, task.timeout);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId}...${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
+      result = await executeGeminiCLI(task.prompt, task.timeout, task.sessionId);
     } else {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
       result = await executeCommand(task.command, task.timeout);
