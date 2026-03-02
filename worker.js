@@ -12,6 +12,7 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 // 防止嵌套检测（从 CC 内部启动时需要）
 delete process.env.CLAUDECODE;
@@ -38,8 +39,8 @@ const CONFIG = {
   longPollWait: parseInt(process.env.LONG_POLL_WAIT) || 30000,
   // 最大并发任务数
   maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,
-  // 命令执行超时（毫秒）- 改为5分钟，适配Claude AI任务和content-alchemy skill
-  defaultTimeout: 300000,
+  // 命令执行超时（毫秒）- 10分钟，适配 Gemini/Codex 慢任务
+  defaultTimeout: 600000,
   // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
   openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
   openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
@@ -365,57 +366,38 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 const DISCORD_PROXY = process.env.DISCORD_PROXY || 'http://127.0.0.1:7897';
 
 /**
- * 通过 HTTP 代理发送 Discord 消息（CONNECT 隧道）
+ * 通过代理发送 Discord 消息（https-proxy-agent，比手写 CONNECT 隧道稳定）
  * 本机直连 discord.com 被墙，必须走代理
  */
 function discordPost(channelId, content, botToken) {
   const token = botToken || DISCORD_BOT_TOKEN;
+  const agent = new HttpsProxyAgent(DISCORD_PROXY);
+  const body = JSON.stringify({ content: content.slice(0, 2000) });
+
   return new Promise((resolve, reject) => {
-    const proxy = new URL(DISCORD_PROXY);
-    const body = JSON.stringify({ content: content.slice(0, 2000) });
-
-    // 第一步：通过代理建立 CONNECT 隧道
-    const connectReq = http.request({
-      host: proxy.hostname,
-      port: proxy.port,
-      method: 'CONNECT',
-      path: 'discord.com:443',
+    const req = https.request({
+      hostname: 'discord.com',
+      path: `/api/v10/channels/${channelId}/messages`,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bot ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      agent,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ status: res.statusCode, data }));
     });
 
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`Proxy CONNECT ${res.statusCode}`));
-        return;
-      }
-
-      // 第二步：通过隧道发 HTTPS 请求
-      const req = https.request({
-        hostname: 'discord.com',
-        path: `/api/v10/channels/${channelId}/messages`,
-        method: 'POST',
-        headers: {
-          'Authorization': `Bot ${token}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-        socket,
-        agent: false,
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => resolve({ status: res.statusCode, data }));
-      });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
+    req.on('error', reject);
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error('Discord request timeout'));
     });
-
-    connectReq.on('error', reject);
-    connectReq.setTimeout(10000, () => {
-      connectReq.destroy();
-      reject(new Error('Proxy connect timeout'));
-    });
-    connectReq.end();
+    req.write(body);
+    req.end();
   });
 }
 
@@ -426,24 +408,25 @@ function notifyDiscord(callbackChannel, sessionId, text, prefix, botToken) {
   let message = `**${prefix}**${sessionInfo}\n\n${text}`;
   if (message.length > 2000) message = message.slice(0, 1997) + '...';
 
-  const maxRetries = 3;
+  const maxRetries = 5;
   let attempt = 0;
 
   function trySend() {
     attempt++;
+    const backoff = Math.min(attempt * 3000, 15000);
     discordPost(callbackChannel, message, botToken).then(({ status, data }) => {
       if (status >= 200 && status < 300) {
-        console.log(`[回调] 推送成功 (${prefix})`);
+        console.log(`[回调] 推送成功 (${prefix})${attempt > 1 ? ` [第${attempt}次]` : ''}`);
       } else if (attempt < maxRetries) {
-        console.error(`[回调] 第${attempt}次失败 (${status})，5s 后重试`);
-        setTimeout(trySend, 5000);
+        console.error(`[回调] 第${attempt}次失败 (${status})，${backoff/1000}s 后重试`);
+        setTimeout(trySend, backoff);
       } else {
-        console.error(`[回调] ${maxRetries}次均失败 (${status}): ${data.slice(0, 100)}`);
+        console.error(`[回调] ${maxRetries}次均失败 (${status}): ${typeof data === 'string' ? data.slice(0, 100) : ''}`);
       }
     }).catch(err => {
       if (attempt < maxRetries) {
-        console.error(`[回调] 第${attempt}次错误，5s 后重试: ${err.message}`);
-        setTimeout(trySend, 5000);
+        console.error(`[回调] 第${attempt}次错误，${backoff/1000}s 后重试: ${err.message}`);
+        setTimeout(trySend, backoff);
       } else {
         console.error(`[回调] ${maxRetries}次均失败: ${err.message}`);
       }
@@ -916,13 +899,32 @@ function notifyCompletion(task, result) {
     notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ ${label} 失败（${duration}）`, task.callbackBotToken);
   } else {
     const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
-    discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
-      if (status >= 200 && status < 300) {
-        console.log(`[回调] ${label} 输出已推送`);
-      } else {
-        console.error(`[回调] 推送失败 (${status})`);
-      }
-    }).catch(err => console.error(`[回调] 推送错误: ${err.message}`));
+    const maxRetries = 5;
+    let attempt = 0;
+
+    function trySend() {
+      attempt++;
+      const backoff = Math.min(attempt * 3000, 15000);
+      discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
+        if (status >= 200 && status < 300) {
+          console.log(`[回调] ${label} 输出已推送${attempt > 1 ? ` [第${attempt}次]` : ''}`);
+        } else if (attempt < maxRetries) {
+          console.error(`[回调] 推送失败 (${status})，${backoff/1000}s 后重试`);
+          setTimeout(trySend, backoff);
+        } else {
+          console.error(`[回调] ${label} ${maxRetries}次推送均失败 (${status})`);
+        }
+      }).catch(err => {
+        if (attempt < maxRetries) {
+          console.error(`[回调] 推送错误，${backoff/1000}s 后重试: ${err.message}`);
+          setTimeout(trySend, backoff);
+        } else {
+          console.error(`[回调] ${label} ${maxRetries}次推送均失败: ${err.message}`);
+        }
+      });
+    }
+
+    trySend();
   }
 }
 

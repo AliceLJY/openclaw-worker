@@ -460,7 +460,7 @@ app.get('/claude/recent', auth, async (req, res) => {
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
-  const TASK_EXPIRE_MS = 15 * 60 * 1000; // 未完成任务 15 分钟过期
+  const TASK_EXPIRE_MS = 20 * 60 * 1000; // 未完成任务 20 分钟过期（适配 15 分钟超时 + buffer）
   const RESULT_EXPIRE_MS = 30 * 60 * 1000; // 已完成结果保留 30 分钟
   const SESSION_EXPIRE_MS = 30 * 60 * 1000; // 会话 30 分钟过期
 
