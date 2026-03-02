@@ -486,8 +486,8 @@ app.get('/codex/recent', auth, async (req, res) => {
           .map(f => {
             const fp = path.join(dayDir, f);
             const stat = fs.default.statSync(fp);
-            // 从文件名提取 UUID：rollout-{timestamp}-{uuid}.jsonl
-            const uuidMatch = f.match(/rollout-\d+-(.+)\.jsonl$/);
+            // 从文件名提取末尾 UUID（兼容 rollout-2026-03-02T12-33-14-{uuid}.jsonl）
+            const uuidMatch = f.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i);
             const sessionId = uuidMatch ? uuidMatch[1] : f.replace('.jsonl', '');
             return { file: f, path: fp, mtime: stat.mtimeMs, size: stat.size, sessionId };
           });
