@@ -291,6 +291,49 @@ Content-Type: application/json
 }
 ```
 
+### Execute Codex CLI
+
+```bash
+POST /codex
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "prompt": "Explain this codebase",
+  "sessionId": "019cadaf-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "model": "gpt-5.3-codex",
+  "timeout": 600000
+}
+```
+
+### Execute Gemini CLI
+
+```bash
+POST /gemini
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "prompt": "Summarize recent changes",
+  "resumeLatest": true,
+  "model": "gemini-2.5-flash",
+  "timeout": 600000
+}
+```
+
+> **Note**: Gemini CLI does not support UUID-based resume. Set `resumeLatest: true` to resume the last session, or omit it to start a new session.
+>
+> Gemini CLI 不支持 UUID 恢复，`resumeLatest: true` 续接最近会话。
+
+### List Recent Codex Sessions
+
+```bash
+GET /codex/recent?limit=8
+Authorization: Bearer YOUR_TOKEN
+```
+
+Returns recent Codex sessions with topic preview extracted from first user message. Requires volume mount `~/.codex/sessions:/host-codex-sessions:ro` in docker-compose.yml.
+
 ### File Operations
 
 ```bash
