@@ -314,7 +314,7 @@ app.post('/codex', auth, (req, res) => {
 
 // [Discord/Telegram bridge 调用] 提交 Gemini CLI 任务（支持 session）
 app.post('/gemini', auth, (req, res) => {
-  const { prompt, timeout = 300000, sessionId, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 300000, sessionId, resumeLatest, callbackChannel, callbackBotToken } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -327,6 +327,7 @@ app.post('/gemini', auth, (req, res) => {
     prompt,
     timeout,
     sessionId: sessionId || null,
+    resumeLatest: resumeLatest || false,
     callbackChannel: callbackChannel || null,
     callbackBotToken: callbackBotToken || null,
     status: 'pending',
@@ -334,8 +335,8 @@ app.post('/gemini', auth, (req, res) => {
   };
 
   tasks.set(taskId, task);
-  const isResume = !!sessionId;
-  console.log(`[Gemini] Task: ${taskId}${isResume ? ' [session:' + sessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  const isResume = resumeLatest || !!sessionId;
+  console.log(`[Gemini] Task: ${taskId}${isResume ? (resumeLatest ? ' [resume:latest]' : ' [session:' + sessionId.slice(0, 8) + ',resume]') : ' [新会话]'}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
   res.json({ taskId, message: 'Gemini CLI task created' });
 });
@@ -448,6 +449,93 @@ app.get('/claude/recent', auth, async (req, res) => {
     results.push({
       sessionId: s.file.replace('.jsonl', ''),
       project: s.project,
+      lastModified: new Date(s.mtime).toISOString(),
+      sizeKB: Math.round(s.size / 1024),
+      topic: topic || '(no topic)',
+    });
+  }
+
+  res.json({ sessions: results });
+});
+
+// [本地调用] 列出最近的 Codex 会话（含话题摘要）
+app.get('/codex/recent', auth, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
+  const fs = await import('fs');
+  const path = await import('path');
+  const readline = await import('readline');
+
+  // 扫描 Codex session 文件（容器内挂载路径，宿主机 ~/.codex/sessions）
+  // 目录结构：YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
+  const sessionsDir = '/host-codex-sessions';
+  const sessionFiles = [];
+
+  try {
+    // 只扫最近 7 天的目录
+    const now = new Date();
+    for (let d = 0; d < 7; d++) {
+      const date = new Date(now - d * 86400000);
+      const yyyy = String(date.getFullYear());
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const dayDir = path.join(sessionsDir, yyyy, mm, dd);
+
+      try {
+        const files = fs.default.readdirSync(dayDir)
+          .filter(f => f.endsWith('.jsonl'))
+          .map(f => {
+            const fp = path.join(dayDir, f);
+            const stat = fs.default.statSync(fp);
+            // 从文件名提取 UUID：rollout-{timestamp}-{uuid}.jsonl
+            const uuidMatch = f.match(/rollout-\d+-(.+)\.jsonl$/);
+            const sessionId = uuidMatch ? uuidMatch[1] : f.replace('.jsonl', '');
+            return { file: f, path: fp, mtime: stat.mtimeMs, size: stat.size, sessionId };
+          });
+        sessionFiles.push(...files);
+      } catch { /* 该天目录不存在，跳过 */ }
+    }
+  } catch (e) {
+    return res.json({ sessions: [], error: e.message });
+  }
+
+  // 按修改时间倒序，取最近 N 个
+  sessionFiles.sort((a, b) => b.mtime - a.mtime);
+  const recent = sessionFiles.slice(0, limit);
+
+  // 提取每个会话的第一条 user 消息作为话题
+  const results = [];
+  for (const s of recent) {
+    let topic = '';
+    try {
+      const stream = fs.default.createReadStream(s.path, { encoding: 'utf8' });
+      const rl = readline.default.createInterface({ input: stream });
+      for await (const line of rl) {
+        try {
+          const d = JSON.parse(line);
+          // Codex JSONL 格式：type: "event_msg" + payload.type: "user_message"
+          if (d.type === 'event_msg' && d.payload?.type === 'user_message') {
+            topic = (d.payload.message || '').slice(0, 150);
+            break;
+          }
+          // 兼容：直接的 role: user 格式
+          if (d.message?.role === 'user') {
+            const content = d.message.content;
+            if (Array.isArray(content)) {
+              const txt = content.find(c => c.type === 'text');
+              if (txt) topic = txt.text.slice(0, 150);
+            } else if (typeof content === 'string') {
+              topic = content.slice(0, 150);
+            }
+            break;
+          }
+        } catch { /* skip malformed lines */ }
+      }
+      rl.close();
+      stream.destroy();
+    } catch { /* skip unreadable files */ }
+
+    results.push({
+      sessionId: s.sessionId,
       lastModified: new Date(s.mtime).toISOString(),
       sizeKB: Math.round(s.size / 1024),
       topic: topic || '(no topic)',

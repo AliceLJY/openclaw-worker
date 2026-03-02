@@ -45,6 +45,7 @@ services:
       - ../server.js:/app/server.js:ro  # 热补丁：修复清理逻辑 bug
       - /var/run/docker.sock:/var/run/docker.sock  # Callback: docker exec into bot containers
       - ~/.claude/projects:/host-claude-projects:ro  # CC session files for /claude/recent
+      - ~/.codex/sessions:/host-codex-sessions:ro  # Codex session files for /codex/recent
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
