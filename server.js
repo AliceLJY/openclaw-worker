@@ -314,7 +314,7 @@ app.post('/codex', auth, (req, res) => {
 
 // [Discord/Telegram bridge 调用] 提交 Gemini CLI 任务（支持 session）
 app.post('/gemini', auth, (req, res) => {
-  const { prompt, timeout = 300000, sessionId, resumeLatest, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 300000, sessionId, resumeLatest, model, callbackChannel, callbackBotToken } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -328,6 +328,7 @@ app.post('/gemini', auth, (req, res) => {
     timeout,
     sessionId: sessionId || null,
     resumeLatest: resumeLatest || false,
+    model: model || null,
     callbackChannel: callbackChannel || null,
     callbackBotToken: callbackBotToken || null,
     status: 'pending',
