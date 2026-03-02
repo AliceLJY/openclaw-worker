@@ -38,7 +38,7 @@ const CONFIG = {
   // 长轮询等待时间（毫秒） - 服务器 hold 住连接的时间
   longPollWait: parseInt(process.env.LONG_POLL_WAIT) || 30000,
   // 最大并发任务数
-  maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 3,
+  maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 5,
   // 命令执行超时（毫秒）- 10分钟，适配 Gemini/Codex 慢任务
   defaultTimeout: 600000,
   // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
