@@ -516,7 +516,13 @@ app.get('/codex/recent', auth, async (req, res) => {
           const d = JSON.parse(line);
           // Codex JSONL 格式：type: "event_msg" + payload.type: "user_message"
           if (d.type === 'event_msg' && d.payload?.type === 'user_message') {
-            topic = (d.payload.message || '').slice(0, 150);
+            const message = String(d.payload.message || '').trim();
+            if (!message) continue;
+            // 过滤命令消息（如 /model、/status，或 @bot /model）
+            const isSlashCommand = /^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
+            const isMentionCommand = /^@\S+\s+\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
+            if (isSlashCommand || isMentionCommand) continue;
+            topic = message.slice(0, 150);
             break;
           }
           // 兼容：直接的 role: user 格式
