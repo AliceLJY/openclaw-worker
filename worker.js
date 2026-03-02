@@ -645,16 +645,17 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, mod
   };
 }
 
-// ========== Codex CLI 执行（支持 session 续接）==========
-function executeCodexCLI(prompt, timeout, sessionId) {
+// ========== Codex CLI 执行（支持 session 续接 + 指定模型）==========
+function executeCodexCLI(prompt, timeout, sessionId, model) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Codex CLI] 执行: "${prompt.slice(0, 50)}..."${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}`);
+    console.log(`[Codex CLI] 执行${model ? ' [' + model + ']' : ''}: "${prompt.slice(0, 50)}..."${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}`);
 
     const escapedPrompt = prompt.replace(/"/g, '\\"');
+    const modelFlag = model ? ` -m "${model.replace(/"/g, '\\"')}"` : '';
     const shellCmd = sessionId
-      ? `/opt/homebrew/bin/codex exec resume --skip-git-repo-check --full-auto "${sessionId}" "${escapedPrompt}"`
-      : `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto "${escapedPrompt}"`;
+      ? `/opt/homebrew/bin/codex exec resume --skip-git-repo-check --full-auto${modelFlag} "${sessionId}" "${escapedPrompt}"`
+      : `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto${modelFlag} "${escapedPrompt}"`;
 
     const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
       cwd: process.env.HOME,
@@ -974,8 +975,8 @@ async function executeTask(task) {
         }
       }
     } else if (task.type === 'codex-cli') {
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}...${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
-      result = await executeCodexCLI(task.prompt, task.timeout, task.sessionId);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}...${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
+      result = await executeCodexCLI(task.prompt, task.timeout, task.sessionId, task.model);
     } else if (task.type === 'gemini-cli') {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId}...${task.resumeLatest ? ' [resume:latest]' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
       result = await executeGeminiCLI(task.prompt, task.timeout, task.resumeLatest, task.model);

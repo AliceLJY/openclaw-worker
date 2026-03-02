@@ -286,7 +286,7 @@ app.post('/claude', auth, (req, res) => {
 
 // [Discord/Telegram bridge 调用] 提交 Codex CLI 任务（支持 session）
 app.post('/codex', auth, (req, res) => {
-  const { prompt, timeout = 300000, sessionId, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 300000, sessionId, model, callbackChannel, callbackBotToken } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -299,6 +299,7 @@ app.post('/codex', auth, (req, res) => {
     prompt,
     timeout,
     sessionId: sessionId || null,
+    model: model || null,
     callbackChannel: callbackChannel || null,
     callbackBotToken: callbackBotToken || null,
     status: 'pending',
@@ -307,7 +308,7 @@ app.post('/codex', auth, (req, res) => {
 
   tasks.set(taskId, task);
   const isResume = !!sessionId;
-  console.log(`[Codex] Task: ${taskId}${isResume ? ' [session:' + sessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  console.log(`[Codex] Task: ${taskId}${isResume ? ' [session:' + sessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${model ? ' [' + model + ']' : ''}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
 
   res.json({ taskId, message: 'Codex CLI task created' });
 });
