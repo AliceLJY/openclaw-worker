@@ -1,0 +1,49 @@
+# OpenClaw LanceDB Test Bot (QA-Probe)
+# 专门用于测试 memory-lancedb-pro PR
+# 绑定 #studio 频道
+
+services:
+  openclaw-lancedb-test:
+    image: ghcr.io/openclaw/openclaw:2026.2.22
+    container_name: openclaw-lancedb-test
+    restart: unless-stopped
+    ports:
+      - "18795:18789"  # Web UI
+      - "18796:18790"  # Bridge
+    volumes:
+      - ~/.openclaw-lancedb-test:/home/node/.openclaw
+      - ~/openclaw-workspace:/home/node/workspace
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_LANCEDB_TEST_TOKEN:-lancedb-test-token}
+      - OPENCLAW_GATEWAY_HOST=0.0.0.0
+    command: ["node", "openclaw.mjs", "gateway", "run", "--bind", "lan", "--port", "18789", "--allow-unconfigured"]
+    init: true
+    healthcheck:
+      test: ["CMD", "sh", "-c", "node -e \"fetch('http://127.0.0.1:18789/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+    networks:
+      - openclaw-net
+
+  # CLI 工具（按需启动）
+  openclaw-lancedb-test-cli:
+    image: ghcr.io/openclaw/openclaw:2026.2.22
+    container_name: openclaw-lancedb-test-cli
+    profiles: ["cli"]
+    volumes:
+      - ~/.openclaw-lancedb-test:/home/node/.openclaw
+      - ~/openclaw-workspace:/home/node/workspace
+    environment:
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_LANCEDB_TEST_TOKEN:-lancedb-test-token}
+    entrypoint: ["node", "openclaw.mjs"]
+    stdin_open: true
+    tty: true
+    networks:
+      - openclaw-net
+
+networks:
+  openclaw-net:
+    external: true
+    name: openclaw-docker_openclaw-net
