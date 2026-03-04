@@ -740,14 +740,20 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 | Project | What It Does |
 |---------|-------------|
-| [content-alchemy](https://github.com/AliceLJY/content-alchemy) | 7-stage content pipeline — the primary use case driven through this Worker |
+| [content-alchemy](https://github.com/AliceLJY/content-alchemy) | 5-stage content pipeline (v5.0) — the primary use case driven through this Worker |
+| [content-publisher](https://github.com/AliceLJY/content-publisher) | Image generation, layout formatting, and WeChat API publishing |
 | [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) | Multi-turn CC orchestration — uses this Worker's Task API + callback |
+| [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) | Discord → CC/Codex/Gemini bridge (zero agent tokens) |
+| [telegram-ai-bridge](https://github.com/AliceLJY/telegram-ai-bridge) | Telegram → CC/Codex via Agent SDK (direct, real-time) |
+| [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) | Bot config kit for content publishing via OpenClaw |
+| [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill) | Extract writing DNA for personalized content voice |
+| [local-memory](https://github.com/AliceLJY/local-memory) | Hybrid vector + keyword search over AI conversation transcripts |
 
 ## Acknowledgments
 
 - Built for the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem - a powerful AI agent framework
 - Inspired by the challenges of running OpenClaw remote control (SSH tunnels, token mismatches)
-- Works great with [baoyu-skills](https://github.com/JimLiu/baoyu-skills) for content automation
+- Content automation via [content-alchemy](https://github.com/AliceLJY/content-alchemy) + [content-publisher](https://github.com/AliceLJY/content-publisher)
 - Uses Claude Code with Max subscription (OAuth, not API) for local AI capabilities
 - Uses MiniMax API for OpenClaw's lightweight routing decisions
 
@@ -773,10 +779,10 @@ Real-world patterns from production use:
 
 Built by **小试AI** ([@AliceLJY](https://github.com/AliceLJY)) · WeChat: **我的AI小木屋**
 
-> 医学出身，文化口工作，AI 野路子。公众号四大板块：AI实操手账 · AI踩坑实录 · AI照见众生 · AI随心分享
+> 医学出身，文化口工作，AI 野路子。公众号六大板块：AI实操手账 · AI踩坑实录 · AI照见众生 · AI冷眼旁观 · AI胡思乱想 · AI视觉笔记
 
-Four content pillars: **Hands-on AI** · **AI Pitfall Diaries** · **AI & Humanity** · **AI Gallery**
+Six content pillars: **Hands-on AI** · **AI Pitfall Diaries** · **AI & Humanity** · **AI Cold Eye** · **AI Musings** · **AI Visual Notes**
 
-Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill)
+Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [content-publisher](https://github.com/AliceLJY/content-publisher) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) · [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) · [telegram-ai-bridge](https://github.com/AliceLJY/telegram-ai-bridge) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill) · [local-memory](https://github.com/AliceLJY/local-memory)
 
 <img src="./assets/wechat_qr.jpg" width="200" alt="WeChat QR Code">
