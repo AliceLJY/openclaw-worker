@@ -254,7 +254,7 @@ Worker finishes CC task
 - Built-in retry: 3 attempts with 5-second intervals, in case the Bot container is temporarily unavailable.
 - Only triggers for `claude-cli` tasks with a `callbackChannel` — shell commands and file operations are not affected.
 
-For the full multi-turn orchestration protocol (how the Bot uses `sessionId` to chain multiple rounds of CC execution), see [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline).
+For the full multi-turn orchestration protocol (how the Bot uses `sessionId` to chain multiple rounds of CC execution), see [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline).
 
 ### Security Model
 
@@ -741,7 +741,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 | Project | What It Does |
 |---------|-------------|
 | [content-alchemy](https://github.com/AliceLJY/content-alchemy) | 7-stage content pipeline — the primary use case driven through this Worker |
-| [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Multi-turn CC orchestration — uses this Worker's Task API + callback |
+| [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) | Multi-turn CC orchestration — uses this Worker's Task API + callback |
 
 ## Acknowledgments
 
@@ -761,7 +761,7 @@ Real-world patterns from production use:
 | [Security Guide](docs/security-guide.md) | Defend against prompt injection when browsing external content |
 | [Cron Task Examples](examples/cron-tasks.md) | Schedule automated tasks: news curation, daily summaries, content patrol |
 | [Claude Code Integration](docs/claude-code-integration.md) | Best practices for invoking local Claude Code from your bot, including callback delivery |
-| [Multi-Turn CC Pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) | Chain multiple rounds of Claude Code execution with human-in-the-loop review (separate repo) |
+| [Multi-Turn CC Pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) | Chain multiple rounds of Claude Code execution with human-in-the-loop review (separate repo) |
 
 ## Support
 
@@ -777,6 +777,6 @@ Built by **小试AI** ([@AliceLJY](https://github.com/AliceLJY)) · WeChat: **�
 
 Four content pillars: **Hands-on AI** · **AI Pitfall Diaries** · **AI & Humanity** · **AI Gallery**
 
-Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill)
+Open-source byproducts: [content-alchemy](https://github.com/AliceLJY/content-alchemy) · [openclaw-worker](https://github.com/AliceLJY/openclaw-worker) · [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) · [openclaw-content-alchemy](https://github.com/AliceLJY/openclaw-content-alchemy) · [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) · [digital-clone-skill](https://github.com/AliceLJY/digital-clone-skill)
 
 <img src="./assets/wechat_qr.jpg" width="200" alt="WeChat QR Code">

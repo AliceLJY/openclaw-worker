@@ -310,7 +310,7 @@ Without `callbackChannel`, no notification is sent — results are only availabl
 
 ### Multi-Turn Orchestration
 
-For chaining multiple rounds of CC execution (e.g., the 3-round Content Alchemy workflow), see [openclaw-cc-pipeline](https://github.com/AliceLJY/openclaw-cc-pipeline). That skill defines the full protocol: how the Bot extracts `sessionId` from callbacks, collects user feedback, and dispatches subsequent rounds with `--resume`.
+For chaining multiple rounds of CC execution (e.g., the 3-round Content Alchemy workflow), see [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline). That skill defines the full protocol: how the Bot extracts `sessionId` from callbacks, collects user feedback, and dispatches subsequent rounds with `--resume`.
 
 ---
 
