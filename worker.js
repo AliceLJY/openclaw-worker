@@ -46,6 +46,10 @@ const CONFIG = {
   openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
 };
 
+if (CONFIG.token === 'change-me-to-a-secure-token') {
+  console.warn('⚠ WARNING: Using default WORKER_TOKEN. Set WORKER_TOKEN env var for production!');
+}
+
 console.log('========================================');
 console.log('  Mac Worker 启动 (Agent SDK + CLI 双模式)');
 console.log('========================================');
@@ -159,10 +163,9 @@ function writeFileToDisk(filePath, content, encoding) {
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      const cleanContent = content ? content.trim() : '';
       const data = encoding === 'base64'
-        ? Buffer.from(cleanContent, 'base64')
-        : cleanContent;
+        ? Buffer.from(content || '', 'base64')
+        : (content || '');
 
       fs.writeFileSync(fullPath, data);
       resolve({

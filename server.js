@@ -8,10 +8,13 @@ import crypto from 'crypto';
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // ========== 配置 ==========
 const AUTH_TOKEN = process.env.WORKER_TOKEN || 'change-me-to-a-secure-token';
+if (AUTH_TOKEN === 'change-me-to-a-secure-token') {
+  console.warn('⚠ WARNING: Using default WORKER_TOKEN. Set WORKER_TOKEN env var for production!');
+}
 const PORT = process.env.WORKER_PORT || 3456;
 
 // ========== 内存任务队列 ==========

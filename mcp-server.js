@@ -6,9 +6,9 @@
  * 启动: MAC_WORKER_URL=http://170.106.73.225:3456 MAC_WORKER_TOKEN=xxx node mcp-server.js
  */
 
-const http = require('http');
-const https = require('https');
-const readline = require('readline');
+import http from 'node:http';
+import https from 'node:https';
+import readline from 'node:readline';
 
 // ========== 配置 ==========
 const WORKER_API = process.env.MAC_WORKER_URL || 'http://170.106.73.225:3456';

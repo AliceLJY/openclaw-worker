@@ -152,7 +152,7 @@ On your cloud server:
 
 ```bash
 # Download server.js
-curl -O https://raw.githubusercontent.com/AliceLJY/openclaw-worker/main/server/server.js
+curl -O https://raw.githubusercontent.com/AliceLJY/openclaw-worker/main/server.js
 
 # Install dependencies
 npm install express
@@ -177,7 +177,7 @@ On your local computer:
 
 ```bash
 # Download worker.js
-curl -O https://raw.githubusercontent.com/AliceLJY/openclaw-worker/main/worker/worker.js
+curl -O https://raw.githubusercontent.com/AliceLJY/openclaw-worker/main/worker.js
 
 # Configure
 export WORKER_URL=http://YOUR_SERVER_IP:3456
