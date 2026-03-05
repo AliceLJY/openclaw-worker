@@ -12,10 +12,14 @@ app.use(express.json({ limit: '5mb' }));
 
 // ========== 配置 ==========
 const AUTH_TOKEN = process.env.WORKER_TOKEN || 'change-me-to-a-secure-token';
-if (AUTH_TOKEN === 'change-me-to-a-secure-token') {
-  console.warn('⚠ WARNING: Using default WORKER_TOKEN. Set WORKER_TOKEN env var for production!');
-}
 const PORT = process.env.WORKER_PORT || 3456;
+
+// 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
+if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
+  console.error('❌ FATAL: WORKER_TOKEN 未设置或过弱（需 ≥16 位，不能用默认值）');
+  console.error('   请在 docker-compose.yml 或 .env 中设置 WORKER_TOKEN');
+  process.exit(1);
+}
 
 // ========== 内存任务队列 ==========
 const tasks = new Map();      // taskId -> task
@@ -589,6 +593,7 @@ setInterval(() => {
 
 // ========== 启动 ==========
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Task API running on port ${PORT}`);
-  console.log(`Auth token: ${AUTH_TOKEN.slice(0, 8)}...`);
+  console.log(`✅ Task API running on :${PORT}`);
+  console.log(`   Token : ${AUTH_TOKEN.slice(0, 4)}${'*'.repeat(AUTH_TOKEN.length - 4)}`);
+  console.log(`   Notify: ${process.env.DISCORD_BOT_TOKEN ? '✓ DISCORD_BOT_TOKEN set' : '✗ no DISCORD_BOT_TOKEN'}`);
 });
