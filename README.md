@@ -254,7 +254,7 @@ Worker finishes CC task
 - Built-in retry: 3 attempts with 5-second intervals, in case the Bot container is temporarily unavailable.
 - Only triggers for `claude-cli` tasks with a `callbackChannel` — shell commands and file operations are not affected.
 
-For the full multi-turn orchestration protocol (how the Bot uses `sessionId` to chain multiple rounds of CC execution), see [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline).
+For the full multi-turn orchestration protocol (how the Bot uses `sessionId` to chain multiple rounds of CC execution), see [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge).
 
 ### Security Model
 
@@ -767,7 +767,7 @@ Real-world patterns from production use:
 | [Security Guide](docs/security-guide.md) | Defend against prompt injection when browsing external content |
 | [Cron Task Examples](examples/cron-tasks.md) | Schedule automated tasks: news curation, daily summaries, content patrol |
 | [Claude Code Integration](docs/claude-code-integration.md) | Best practices for invoking local Claude Code from your bot, including callback delivery |
-| [Multi-Turn CC Pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline) | Chain multiple rounds of Claude Code execution with human-in-the-loop review (separate repo) |
+| [openclaw-cli-bridge](https://github.com/AliceLJY/openclaw-cli-bridge) | Three-way bridge: /cc /codex /gemini commands for Discord bots |
 
 ## Support
 

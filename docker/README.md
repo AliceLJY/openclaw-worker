@@ -26,8 +26,8 @@
 
 | 项目 | 云端方案 | 本地 Docker 方案 |
 |------|----------|------------------|
-| OpenClaw 位置 | 腾讯云 | 本地 Docker |
-| Task API 位置 | 腾讯云 | 本地 Docker |
+| OpenClaw 位置 | AWS EC2 | 本地 Docker |
+| Task API 位置 | AWS EC2 | 本地 Docker |
 | Worker 位置 | 本地 Mac | 本地 Mac |
 | CC 位置 | 本地 Mac | 本地 Mac |
 | 网络延迟 | 有（跨网络）| 无（localhost）|

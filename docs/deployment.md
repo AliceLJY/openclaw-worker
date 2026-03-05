@@ -127,7 +127,7 @@ The architecture described here is based on a production deployment controlling 
 │   Discord    │────▶│   Cloud Server                 │◀────│   Local Mac         │
 │   Client     │     │   • OpenClaw (MiniMax API)     │     │   • Worker          │
 │   (Mobile)   │     │   • Claude Code (Max)          │     │   • Claude Code (Max)│
-└──────────────┘     │   • Task API (Node.js)         │     │   • baoyu-skills    │
+└──────────────┘     │   • Task API (Node.js)         │     │   • content-publisher│
                      └────────────────────────────────┘     └─────────────────────┘
 ```
 
@@ -135,10 +135,9 @@ The architecture described here is based on a production deployment controlling 
 
 ### Cloud Server
 
-**Provider**: Tencent Cloud Lighthouse (Silicon Valley)
+**Provider**: AWS EC2 (Ohio, us-east-2)
 - **Reason**: International location required for Discord API access
-- **Specs**: 2 vCPU, 2GB RAM, 40GB SSD
-- **OS**: Ubuntu 20.04 LTS
+- **OS**: Ubuntu
 - **Services**:
   - [OpenClaw](https://github.com/openclaw/openclaw) (with MiniMax API key for routing)
   - Claude Code CLI (Max subscription via OAuth, not API)
@@ -157,7 +156,7 @@ The architecture described here is based on a production deployment controlling 
 **Services**:
 - Worker (this project's worker.js)
 - Claude Code CLI (Max subscription via OAuth, same account as cloud)
-- baoyu-skills (optional, for extended capabilities like image generation)
+- content-publisher (image generation, layout formatting, WeChat publishing)
 
 **Why this setup**:
 - Mac required for macOS-specific automation

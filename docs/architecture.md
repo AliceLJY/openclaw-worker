@@ -17,7 +17,7 @@
 | Task API | 云端/本地 | Node.js/Express | 任务队列，转发到本地 |
 | Worker | 本地 Mac | Node.js | 轮询任务，调用本地资源 |
 | 本地 CC | 本地 Mac | Claude Code CLI (Max 订阅, OAuth) | AI 任务执行 |
-| baoyu-skills | 本地 Mac | TypeScript/Bun | Gemini 生图等扩展能力 |
+| content-publisher | 本地 Mac | TypeScript/Bun | 配图+排版+发布 |
 
 ---
 
