@@ -12,6 +12,7 @@ services:
     ports:
       - "18789:18789"  # Web UI
       - "18790:18790"  # Bridge
+      - "18802:18800"  # A2A Gateway（18802 避免与 AntiBot/Twin 冲突）
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-~/.openclaw-docker}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-~/openclaw-workspace}:/home/node/workspace

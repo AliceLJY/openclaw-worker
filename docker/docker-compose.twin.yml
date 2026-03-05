@@ -9,6 +9,7 @@ services:
     ports:
       - "18793:18789"  # Web UI
       - "18794:18790"  # Bridge
+      - "18801:18800"  # A2A Gateway（用 18801 避免与 AntiBot 冲突）
     volumes:
       - ~/.openclaw-twin:/home/node/.openclaw
       - /var/run/docker.sock:/var/run/docker.sock  # Mechanic: 管理其他容器

@@ -11,6 +11,7 @@ services:
     ports:
       - "18791:18789"  # Web UI（不同端口避免冲突）
       - "18792:18790"  # Bridge
+      - "18800:18800"  # A2A Gateway
     volumes:
       - ~/.openclaw-antigravity:/home/node/.openclaw
       - ~/openclaw-workspace:/home/node/workspace
