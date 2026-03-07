@@ -10,9 +10,18 @@ const app = express();
 
 app.use(express.json({ limit: '5mb' }));
 
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // ========== 配置 ==========
 const AUTH_TOKEN = process.env.WORKER_TOKEN || 'change-me-to-a-secure-token';
 const PORT = process.env.WORKER_PORT || 3456;
+const DEFAULT_TASK_TIMEOUT_MS = 30000;
+const DEFAULT_POLL_WAIT_MS = 30000;
+const MAX_POLL_WAIT_MS = 60000;
+const MIN_TASK_TIMEOUT_MS = 1000;
+const MAX_TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
 if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
@@ -29,13 +38,133 @@ const results = new Map();    // taskId -> result
 const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
 
 // ========== 认证中间件 ==========
+function parseBearerToken(headerValue) {
+  if (typeof headerValue !== 'string') return '';
+  const match = headerValue.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+function parseBoundedInt(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeOptionalString(value) {
+  const trimmed = normalizeString(value);
+  return trimmed || null;
+}
+
+function parseTaskTimeout(value, fallback) {
+  return parseBoundedInt(value, fallback, { min: MIN_TASK_TIMEOUT_MS, max: MAX_TASK_TIMEOUT_MS });
+}
+
+function previewText(text, max = 50) {
+  const compact = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return compact.length > max ? `${compact.slice(0, max)}...` : compact;
+}
+
+function enqueueTask(payload) {
+  const task = {
+    id: crypto.randomUUID(),
+    status: 'pending',
+    createdAt: Date.now(),
+    ...payload
+  };
+  tasks.set(task.id, task);
+  return task;
+}
+
+function consumeTaskResult(taskId) {
+  if (!results.has(taskId)) return null;
+  const result = results.get(taskId);
+  results.delete(taskId);
+  tasks.delete(taskId);
+  return result;
+}
+
+function claimNextPendingTask() {
+  for (const [taskId, task] of tasks) {
+    if (task.status === 'pending') {
+      task.status = 'running';
+      console.log(`[Worker] Picked up: ${taskId}`);
+      return task;
+    }
+  }
+  return null;
+}
+
+async function loadSessionModules() {
+  const [fs, path, readline] = await Promise.all([
+    import('fs'),
+    import('path'),
+    import('readline'),
+  ]);
+  return {
+    fs: fs.default,
+    path: path.default,
+    readline: readline.default,
+  };
+}
+
+function parseRecentLimit(value) {
+  return parseBoundedInt(value, 10, { min: 1, max: 20 });
+}
+
+function extractUserText(content) {
+  if (Array.isArray(content)) {
+    const textBlock = content.find(item => item?.type === 'text' && typeof item.text === 'string');
+    return textBlock?.text ? textBlock.text.slice(0, 150) : '';
+  }
+  if (typeof content === 'string') {
+    return content.slice(0, 150);
+  }
+  return '';
+}
+
+async function extractSessionTopic(filePath, fs, readline, resolver) {
+  let topic = '';
+  try {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream });
+    for await (const line of rl) {
+      try {
+        const parsed = JSON.parse(line);
+        const candidate = resolver(parsed);
+        if (candidate) {
+          topic = candidate;
+          break;
+        }
+      } catch {
+        // skip malformed lines
+      }
+    }
+    rl.close();
+    stream.destroy();
+  } catch {
+    // skip unreadable files
+  }
+  return topic || '(no topic)';
+}
+
 function auth(req, res, next) {
-  const token = req.headers['authorization']?.replace('Bearer ', '');
+  const token = parseBearerToken(req.headers['authorization']);
   if (token !== AUTH_TOKEN) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
 }
+
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+  return next(err);
+});
 
 // ========== API 路由 ==========
 
@@ -51,50 +180,41 @@ app.get('/health', (req, res) => {
 
 // [云端 OpenClaw 调用] 提交任务
 app.post('/tasks', auth, (req, res) => {
-  const { command, timeout = 30000 } = req.body;
+  const { command, timeout = DEFAULT_TASK_TIMEOUT_MS } = req.body || {};
+  const normalizedCommand = normalizeString(command);
 
-  if (!command) {
+  if (!normalizedCommand) {
     return res.status(400).json({ error: 'command is required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
-    command,
-    timeout,
-    status: 'pending',
-    createdAt: Date.now()
-  };
+  const task = enqueueTask({
+    command: normalizedCommand,
+    timeout: parseTaskTimeout(timeout, DEFAULT_TASK_TIMEOUT_MS)
+  });
+  console.log(`[Task] Created: ${task.id} - ${normalizedCommand}`);
 
-  tasks.set(taskId, task);
-  console.log(`[Task] Created: ${taskId} - ${command}`);
-
-  res.json({ taskId, message: 'Task created, waiting for worker' });
+  res.json({ taskId: task.id, message: 'Task created, waiting for worker' });
 });
 
 // [云端 OpenClaw 调用] 查询结果（带轮询等待）
 app.get('/tasks/:taskId', auth, async (req, res) => {
   const { taskId } = req.params;
-  const waitMs = parseInt(req.query.wait) || 0; // 最多等待多少毫秒
+  const waitMs = parseBoundedInt(req.query.wait, 0, { min: 0, max: MAX_POLL_WAIT_MS }); // 最多等待多少毫秒
 
   const startTime = Date.now();
 
   // 轮询等待结果
   while (Date.now() - startTime < waitMs) {
-    if (results.has(taskId)) {
-      const result = results.get(taskId);
-      results.delete(taskId); // 取走后删除
-      tasks.delete(taskId);
+    const result = consumeTaskResult(taskId);
+    if (result) {
       return res.json(result);
     }
     await new Promise(r => setTimeout(r, 500)); // 每 500ms 检查一次
   }
 
   // 超时或不等待，返回当前状态
-  if (results.has(taskId)) {
-    const result = results.get(taskId);
-    results.delete(taskId);
-    tasks.delete(taskId);
+  const result = consumeTaskResult(taskId);
+  if (result) {
     return res.json(result);
   }
 
@@ -108,27 +228,21 @@ app.get('/tasks/:taskId', auth, async (req, res) => {
 
 // [本地 Worker 调用] 获取待执行任务（长轮询）
 app.get('/worker/poll', auth, async (req, res) => {
-  const waitMs = Math.min(parseInt(req.query.wait) || 30000, 60000);
+  const waitMs = parseBoundedInt(req.query.wait, DEFAULT_POLL_WAIT_MS, { min: 1000, max: MAX_POLL_WAIT_MS });
 
   // 先立即检查一次
-  for (const [taskId, task] of tasks) {
-    if (task.status === 'pending') {
-      task.status = 'running';
-      console.log(`[Worker] Picked up: ${taskId}`);
-      return res.json(task);
-    }
+  const initialTask = claimNextPendingTask();
+  if (initialTask) {
+    return res.json(initialTask);
   }
 
   // 长轮询：hold 住连接，每 500ms 检查一次
   const startTime = Date.now();
   while (Date.now() - startTime < waitMs) {
     await new Promise(r => setTimeout(r, 500));
-    for (const [taskId, task] of tasks) {
-      if (task.status === 'pending') {
-        task.status = 'running';
-        console.log(`[Worker] Picked up: ${taskId}`);
-        return res.json(task);
-      }
+    const pendingTask = claimNextPendingTask();
+    if (pendingTask) {
+      return res.json(pendingTask);
     }
   }
 
@@ -137,7 +251,7 @@ app.get('/worker/poll', auth, async (req, res) => {
 
 // [本地 Worker 调用] 上报结果
 app.post('/worker/result', auth, (req, res) => {
-  const { taskId, stdout, stderr, exitCode, error, metadata } = req.body;
+  const { taskId, stdout, stderr, exitCode, error, metadata } = req.body || {};
 
   if (!taskId) {
     return res.status(400).json({ error: 'taskId is required' });
@@ -178,104 +292,88 @@ app.post('/worker/result', auth, (req, res) => {
 
 // [云端 OpenClaw 调用] 写入文件
 app.post('/files/write', auth, (req, res) => {
-  const { path, content, encoding = 'utf8' } = req.body;
+  const { path, content, encoding = 'utf8' } = req.body || {};
+  const normalizedPath = normalizeString(path);
 
-  if (!path || content === undefined) {
+  if (!normalizedPath || content === undefined) {
     return res.status(400).json({ error: 'path and content are required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const task = enqueueTask({
     type: 'file-write',
-    path,
+    path: normalizedPath,
     content,
     encoding, // 'utf8' 或 'base64'
-    status: 'pending',
-    createdAt: Date.now()
-  };
+  });
 
-  tasks.set(taskId, task);
-  console.log(`[File] Write: ${taskId} - ${path}`);
+  console.log(`[File] Write: ${task.id} - ${normalizedPath}`);
 
-  res.json({ taskId, message: 'File write task created' });
+  res.json({ taskId: task.id, message: 'File write task created' });
 });
 
 // [云端 OpenClaw 调用] 读取文件
 app.post('/files/read', auth, (req, res) => {
-  const { path } = req.body;
+  const { path } = req.body || {};
+  const normalizedPath = normalizeString(path);
 
-  if (!path) {
+  if (!normalizedPath) {
     return res.status(400).json({ error: 'path is required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const task = enqueueTask({
     type: 'file-read',
-    path,
-    status: 'pending',
-    createdAt: Date.now()
-  };
+    path: normalizedPath,
+  });
 
-  tasks.set(taskId, task);
-  console.log(`[File] Read: ${taskId} - ${path}`);
+  console.log(`[File] Read: ${task.id} - ${normalizedPath}`);
 
-  res.json({ taskId, message: 'File read task created' });
+  res.json({ taskId: task.id, message: 'File read task created' });
 });
 
 // [云端 OpenClaw 调用] 编辑文件（局部替换）
 app.post('/files/edit', auth, (req, res) => {
-  const { path, old_string, new_string, replace_all = false } = req.body;
+  const { path, old_string, new_string, replace_all = false } = req.body || {};
+  const normalizedPath = normalizeString(path);
 
-  if (!path || old_string === undefined || new_string === undefined) {
+  if (!normalizedPath || old_string === undefined || new_string === undefined) {
     return res.status(400).json({ error: 'path, old_string, new_string are required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const task = enqueueTask({
     type: 'file-edit',
-    path,
+    path: normalizedPath,
     oldString: old_string,
     newString: new_string,
     replaceAll: replace_all,
-    status: 'pending',
-    createdAt: Date.now()
-  };
+  });
 
-  tasks.set(taskId, task);
-  console.log(`[File] Edit: ${taskId} - ${path}`);
+  console.log(`[File] Edit: ${task.id} - ${normalizedPath}`);
 
-  res.json({ taskId, message: 'File edit task created' });
+  res.json({ taskId: task.id, message: 'File edit task created' });
 });
 
 // ========== Claude CLI API（调用本地 Claude Code） ==========
 
 // [云端 OpenClaw 调用] 执行本地 Claude Code CLI
 app.post('/claude', auth, (req, res) => {
-  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 120000, sessionId, callbackChannel, callbackBotToken } = req.body || {};
+  const promptText = typeof prompt === 'string' ? prompt : '';
+  const requestedSessionId = normalizeOptionalString(sessionId);
 
-  if (!prompt) {
+  if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
-  const taskId = crypto.randomUUID();
   // 自动生成 sessionId：确保每轮 CC 都有可追踪的 session，支持后续 --resume
-  const effectiveSessionId = sessionId || crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const effectiveSessionId = requestedSessionId || crypto.randomUUID();
+  const task = enqueueTask({
     type: 'claude-cli',
-    prompt,
-    timeout,
+    prompt: promptText,
+    timeout: parseTaskTimeout(timeout, 120000),
     sessionId: effectiveSessionId,
-    callbackChannel: callbackChannel || null,
-    callbackBotToken: callbackBotToken || null,
-    status: 'pending',
-    createdAt: Date.now()
-  };
-
-  tasks.set(taskId, task);
+    callbackChannel: normalizeOptionalString(callbackChannel),
+    callbackBotToken: normalizeOptionalString(callbackBotToken),
+  });
 
   // 更新会话跟踪
   activeSessions.set(effectiveSessionId, {
@@ -283,79 +381,74 @@ app.post('/claude', auth, (req, res) => {
     taskCount: (activeSessions.get(effectiveSessionId)?.taskCount || 0)
   });
 
-  const isResume = !!sessionId;
-  console.log(`[Claude] Task: ${taskId} [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  const isResume = Boolean(requestedSessionId);
+  console.log(`[Claude] Task: ${task.id} [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
 
-  res.json({ taskId, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
+  res.json({ taskId: task.id, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
 
 // ========== Codex / Gemini CLI API ==========
 
 // [Discord/Telegram bridge 调用] 提交 Codex CLI 任务（支持 session）
 app.post('/codex', auth, (req, res) => {
-  const { prompt, timeout = 300000, sessionId, model, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 300000, sessionId, model, callbackChannel, callbackBotToken } = req.body || {};
+  const promptText = typeof prompt === 'string' ? prompt : '';
+  const normalizedSessionId = normalizeOptionalString(sessionId);
 
-  if (!prompt) {
+  if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const task = enqueueTask({
     type: 'codex-cli',
-    prompt,
-    timeout,
-    sessionId: sessionId || null,
-    model: model || null,
-    callbackChannel: callbackChannel || null,
-    callbackBotToken: callbackBotToken || null,
-    status: 'pending',
-    createdAt: Date.now()
-  };
+    prompt: promptText,
+    timeout: parseTaskTimeout(timeout, 300000),
+    sessionId: normalizedSessionId,
+    model: normalizeOptionalString(model),
+    callbackChannel: normalizeOptionalString(callbackChannel),
+    callbackBotToken: normalizeOptionalString(callbackBotToken),
+  });
 
-  tasks.set(taskId, task);
-  const isResume = !!sessionId;
-  console.log(`[Codex] Task: ${taskId}${isResume ? ' [session:' + sessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${model ? ' [' + model + ']' : ''}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  const isResume = Boolean(normalizedSessionId);
+  console.log(`[Codex] Task: ${task.id}${isResume ? ' [session:' + normalizedSessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${task.model ? ' [' + task.model + ']' : ''}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
 
-  res.json({ taskId, message: 'Codex CLI task created' });
+  res.json({ taskId: task.id, message: 'Codex CLI task created' });
 });
 
 // [Discord/Telegram bridge 调用] 提交 Gemini CLI 任务（支持 session）
 app.post('/gemini', auth, (req, res) => {
-  const { prompt, timeout = 300000, sessionId, resumeLatest, model, callbackChannel, callbackBotToken } = req.body;
+  const { prompt, timeout = 300000, sessionId, resumeLatest, model, callbackChannel, callbackBotToken } = req.body || {};
+  const promptText = typeof prompt === 'string' ? prompt : '';
+  const normalizedSessionId = normalizeOptionalString(sessionId);
 
-  if (!prompt) {
+  if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
-  const taskId = crypto.randomUUID();
-  const task = {
-    id: taskId,
+  const task = enqueueTask({
     type: 'gemini-cli',
-    prompt,
-    timeout,
-    sessionId: sessionId || null,
-    resumeLatest: resumeLatest || false,
-    model: model || null,
-    callbackChannel: callbackChannel || null,
-    callbackBotToken: callbackBotToken || null,
-    status: 'pending',
-    createdAt: Date.now()
-  };
+    prompt: promptText,
+    timeout: parseTaskTimeout(timeout, 300000),
+    sessionId: normalizedSessionId,
+    resumeLatest: Boolean(resumeLatest),
+    model: normalizeOptionalString(model),
+    callbackChannel: normalizeOptionalString(callbackChannel),
+    callbackBotToken: normalizeOptionalString(callbackBotToken),
+  });
 
-  tasks.set(taskId, task);
-  const isResume = resumeLatest || !!sessionId;
-  console.log(`[Gemini] Task: ${taskId}${isResume ? (resumeLatest ? ' [resume:latest]' : ' [session:' + sessionId.slice(0, 8) + ',resume]') : ' [新会话]'}${callbackChannel ? ' [callback:' + callbackChannel + ']' : ''} - ${prompt.slice(0, 50)}...`);
+  const isResume = task.resumeLatest || Boolean(normalizedSessionId);
+  console.log(`[Gemini] Task: ${task.id}${isResume ? (task.resumeLatest ? ' [resume:latest]' : ' [session:' + normalizedSessionId.slice(0, 8) + ',resume]') : ' [新会话]'}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
 
-  res.json({ taskId, message: 'Gemini CLI task created' });
+  res.json({ taskId: task.id, message: 'Gemini CLI task created' });
 });
 
 // ========== Discord 消息推送 ==========
 
 // 让 cc-bridge hook 推消息到 Discord（hook 自己在容器里无法直推）
 app.post('/notify', auth, async (req, res) => {
-  const { channel, message } = req.body;
-  if (!channel || !message) {
+  const channel = normalizeString(req.body?.channel);
+  const message = typeof req.body?.message === 'string' ? req.body.message : '';
+  if (!channel || !message.trim()) {
     return res.status(400).json({ error: 'channel and message are required' });
   }
   const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -378,7 +471,7 @@ app.post('/notify', auth, async (req, res) => {
       res.status(502).json({ error: `Discord ${resp.status}: ${text}` });
     }
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(502).json({ error: errorMessage(err) });
   }
 });
 
@@ -396,33 +489,31 @@ app.get('/claude/sessions', auth, (req, res) => {
 
 // [本地调用] 列出最近的 CC 会话（含话题摘要）
 app.get('/claude/recent', auth, async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
-  const fs = await import('fs');
-  const path = await import('path');
-  const readline = await import('readline');
+  const limit = parseRecentLimit(req.query.limit);
+  const { fs, path, readline } = await loadSessionModules();
 
   // 扫描 CC session 文件（容器内挂载路径，宿主机 ~/.claude/projects）
   const projectsDir = '/host-claude-projects';
   const sessions = [];
 
   try {
-    const projectDirs = fs.default.readdirSync(projectsDir).filter(d =>
-      fs.default.statSync(path.join(projectsDir, d)).isDirectory()
+    const projectDirs = fs.readdirSync(projectsDir).filter(d =>
+      fs.statSync(path.join(projectsDir, d)).isDirectory()
     );
 
     for (const dir of projectDirs) {
       const fullDir = path.join(projectsDir, dir);
-      const files = fs.default.readdirSync(fullDir)
+      const files = fs.readdirSync(fullDir)
         .filter(f => f.endsWith('.jsonl'))
         .map(f => {
           const fp = path.join(fullDir, f);
-          const stat = fs.default.statSync(fp);
+          const stat = fs.statSync(fp);
           return { file: f, path: fp, mtime: stat.mtimeMs, size: stat.size, project: dir };
         });
       sessions.push(...files);
     }
   } catch (e) {
-    return res.json({ sessions: [], error: e.message });
+    return res.json({ sessions: [], error: errorMessage(e) });
   }
 
   // 按修改时间倒序，取最近 N 个
@@ -432,35 +523,17 @@ app.get('/claude/recent', auth, async (req, res) => {
   // 提取每个会话的第一条 user 消息作为话题
   const results = [];
   for (const s of recent) {
-    let topic = '';
-    try {
-      const stream = fs.default.createReadStream(s.path, { encoding: 'utf8' });
-      const rl = readline.default.createInterface({ input: stream });
-      for await (const line of rl) {
-        try {
-          const d = JSON.parse(line);
-          if (d.message?.role === 'user') {
-            const content = d.message.content;
-            if (Array.isArray(content)) {
-              const txt = content.find(c => c.type === 'text');
-              if (txt) topic = txt.text.slice(0, 150);
-            } else if (typeof content === 'string') {
-              topic = content.slice(0, 150);
-            }
-            break;
-          }
-        } catch { /* skip malformed lines */ }
-      }
-      rl.close();
-      stream.destroy();
-    } catch { /* skip unreadable files */ }
+    const topic = await extractSessionTopic(s.path, fs, readline, (record) => {
+      if (record.message?.role !== 'user') return '';
+      return extractUserText(record.message.content);
+    });
 
     results.push({
       sessionId: s.file.replace('.jsonl', ''),
       project: s.project,
       lastModified: new Date(s.mtime).toISOString(),
       sizeKB: Math.round(s.size / 1024),
-      topic: topic || '(no topic)',
+      topic,
     });
   }
 
@@ -469,10 +542,8 @@ app.get('/claude/recent', auth, async (req, res) => {
 
 // [本地调用] 列出最近的 Codex 会话（含话题摘要）
 app.get('/codex/recent', auth, async (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 10, 20);
-  const fs = await import('fs');
-  const path = await import('path');
-  const readline = await import('readline');
+  const limit = parseRecentLimit(req.query.limit);
+  const { fs, path, readline } = await loadSessionModules();
 
   // 扫描 Codex session 文件（容器内挂载路径，宿主机 ~/.codex/sessions）
   // 目录结构：YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
@@ -490,11 +561,11 @@ app.get('/codex/recent', auth, async (req, res) => {
       const dayDir = path.join(sessionsDir, yyyy, mm, dd);
 
       try {
-        const files = fs.default.readdirSync(dayDir)
+        const files = fs.readdirSync(dayDir)
           .filter(f => f.endsWith('.jsonl'))
           .map(f => {
             const fp = path.join(dayDir, f);
-            const stat = fs.default.statSync(fp);
+            const stat = fs.statSync(fp);
             // 从文件名提取末尾 UUID（兼容 rollout-2026-03-02T12-33-14-{uuid}.jsonl）
             const uuidMatch = f.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i);
             const sessionId = uuidMatch ? uuidMatch[1] : f.replace('.jsonl', '');
@@ -504,7 +575,7 @@ app.get('/codex/recent', auth, async (req, res) => {
       } catch { /* 该天目录不存在，跳过 */ }
     }
   } catch (e) {
-    return res.json({ sessions: [], error: e.message });
+    return res.json({ sessions: [], error: errorMessage(e) });
   }
 
   // 按修改时间倒序，取最近 N 个
@@ -514,46 +585,24 @@ app.get('/codex/recent', auth, async (req, res) => {
   // 提取每个会话的第一条 user 消息作为话题
   const results = [];
   for (const s of recent) {
-    let topic = '';
-    try {
-      const stream = fs.default.createReadStream(s.path, { encoding: 'utf8' });
-      const rl = readline.default.createInterface({ input: stream });
-      for await (const line of rl) {
-        try {
-          const d = JSON.parse(line);
-          // Codex JSONL 格式：type: "event_msg" + payload.type: "user_message"
-          if (d.type === 'event_msg' && d.payload?.type === 'user_message') {
-            const message = String(d.payload.message || '').trim();
-            if (!message) continue;
-            // 过滤命令消息（如 /model、/status，或 @bot /model）
-            const isSlashCommand = /^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
-            const isMentionCommand = /^@\S+\s+\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
-            if (isSlashCommand || isMentionCommand) continue;
-            topic = message.slice(0, 150);
-            break;
-          }
-          // 兼容：直接的 role: user 格式
-          if (d.message?.role === 'user') {
-            const content = d.message.content;
-            if (Array.isArray(content)) {
-              const txt = content.find(c => c.type === 'text');
-              if (txt) topic = txt.text.slice(0, 150);
-            } else if (typeof content === 'string') {
-              topic = content.slice(0, 150);
-            }
-            break;
-          }
-        } catch { /* skip malformed lines */ }
+    const topic = await extractSessionTopic(s.path, fs, readline, (record) => {
+      if (record.type === 'event_msg' && record.payload?.type === 'user_message') {
+        const message = normalizeString(record.payload.message);
+        if (!message) return '';
+        const isSlashCommand = /^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
+        const isMentionCommand = /^@\S+\s+\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(message);
+        if (isSlashCommand || isMentionCommand) return '';
+        return message.slice(0, 150);
       }
-      rl.close();
-      stream.destroy();
-    } catch { /* skip unreadable files */ }
+      if (record.message?.role !== 'user') return '';
+      return extractUserText(record.message.content);
+    });
 
     results.push({
       sessionId: s.sessionId,
       lastModified: new Date(s.mtime).toISOString(),
       sizeKB: Math.round(s.size / 1024),
-      topic: topic || '(no topic)',
+      topic,
     });
   }
 

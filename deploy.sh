@@ -64,7 +64,7 @@ ssh "${SERVER_USER}@${SERVER_IP}" "mkdir -p ${REMOTE_DIR}"
 log_info "上传文件..."
 scp -r \
     "${LOCAL_DIR}/server.js" \
-    "${LOCAL_DIR}/mac-remote-tool.js" \
+    "${LOCAL_DIR}/mac-remote-tool.cjs" \
     "${LOCAL_DIR}/package.json" \
     "${SERVER_USER}@${SERVER_IP}:${REMOTE_DIR}/"
 

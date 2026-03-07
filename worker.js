@@ -17,6 +17,14 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 // 防止嵌套检测（从 CC 内部启动时需要）
 delete process.env.CLAUDECODE;
 
+function parseConfigInt(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < min) return min;
+  if (parsed > max) return max;
+  return parsed;
+}
+
 // ========== Agent SDK 加载（失败则回退 CLI） ==========
 let sdkQuery;
 try {
@@ -34,11 +42,11 @@ const CONFIG = {
   // 认证 Token（和云端保持一致）
   token: process.env.WORKER_TOKEN || 'change-me-to-a-secure-token',
   // 轮询间隔（毫秒） - 仅在并发满时使用
-  pollInterval: parseInt(process.env.POLL_INTERVAL) || 500,
+  pollInterval: parseConfigInt(process.env.POLL_INTERVAL, 500, 50, 60000),
   // 长轮询等待时间（毫秒） - 服务器 hold 住连接的时间
-  longPollWait: parseInt(process.env.LONG_POLL_WAIT) || 30000,
+  longPollWait: parseConfigInt(process.env.LONG_POLL_WAIT, 30000, 1000, 300000),
   // 最大并发任务数
-  maxConcurrent: parseInt(process.env.MAX_CONCURRENT) || 5,
+  maxConcurrent: parseConfigInt(process.env.MAX_CONCURRENT, 5, 1, 50),
   // 命令执行超时（毫秒）- 10分钟，适配 Gemini/Codex 慢任务
   defaultTimeout: 600000,
   // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
