@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Docker-First Product Positioning
+
+### Changed
+- **首页口径**：将仓库定位明确为 `Docker-first execution plane for OpenClaw-compatible agents`
+- **部署矩阵**：区分 `Docker Local`、`Docker + Remote Runner`、`Cloud + Remote Runner` 和 `Single Host`
+- **产品叙事**：明确 Docker 是控制面壳，runner 是执行面，既可本地也可远端
+
 ## [2026-03-08] - Persistent Session Store
 
 ### Added

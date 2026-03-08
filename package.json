@@ -1,7 +1,7 @@
 {
   "name": "openclaw-worker",
-  "version": "5.6.0",
-  "description": "Docker-first local runner and reconciler for OpenClaw CLI orchestration",
+  "version": "5.6.1",
+  "description": "Docker-first execution plane for OpenClaw-compatible CLI agents",
   "type": "module",
   "scripts": {
     "task-api": "node server.js",

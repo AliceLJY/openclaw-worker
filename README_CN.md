@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-这是一个面向 OpenClaw CLI 编排的 Docker-first 本地 runner / reconciler。核心思路本身可移植，但这个仓库里已经打磨成熟、长期实战的路径仍然明显是 macOS-first。
+这是一个面向 OpenClaw 兼容 agent 的 Docker-first 执行平面。控制面既可以本地跑在 Docker，也可以部署在远端服务器；真正的 runner 则运行在拥有 CLI、文件、shell 和本地 session 状态的宿主机上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
@@ -24,9 +24,15 @@
 更准确的产品形态是：
 
 - Docker-first control plane
-- 拥有真实文件和 CLI 权限的本地 runner
+- 运行在宿主机上的执行 runner，拥有真实文件和 CLI 权限
 - hook 加速的 callback 回投
 - 负责领任务、恢复和兜底的 reconciler 循环
+
+更落地的部署理解是：
+
+- 如果你想单机自托管，就把控制面跑在本地 Docker 里
+- 如果你想远端编排，就把控制面跑在云端或远程服务器
+- 无论哪种方式，runner 都应该留在真正拥有 Claude Code、Codex、Gemini、本地文件和浏览器上下文的那台机器上
 
 长轮询仍然保留，但它只是领任务的传输实现，不应该再作为产品主叙事。
 
@@ -85,26 +91,27 @@
 
 ## 它是干什么的
 
-OpenClaw Docker Runner 在云端编排和本地执行之间加了一层队列边界：
+OpenClaw Docker Runner 在 OpenClaw 兼容控制面和真实宿主机能力之间，加了一层安全的执行边界：
 
 - Client 或 Bot 把任务提交给 `server.js`
-- 本地 runner 通过 reconciler 循环领取任务
-- runner 执行命令或本地 AI CLI 任务
+- runner 通过 reconciler 循环领取任务
+- runner 在宿主机上执行命令或本地 AI CLI 任务
 - 结果回传给 Task API
 - 可选回调会通过 hook-first 路径把完成消息再推回 Bot 侧
 - 最近事件会保留在 Task API 中，便于调试和审计
 
 ```text
-Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
+Client / Bot / OpenClaw -> Task API -> Host Runner / Reconciler -> Local CLI / Files / Browser / Claude Code
 ```
 
 ## 部署模式
 
 | 模式 | 分别跑在哪里 | 说明 |
 |------|--------------|------|
-| Cloud + Local Runner | `server.js` 跑云端，`worker.js` 跑本地机器 | 主要远控形态 |
-| Docker Local | OpenClaw 和 Task API 在 Docker，runner 在宿主机 | 最接近作者当前本地实战路径 |
-| Bare Metal API | `server.js` 直接跑在某台主机上，runner 跑在另一台机器上 | 理论可行，但这里文档较少 |
+| Docker Local | OpenClaw 和 Task API 在同一台机器的 Docker 中，runner 在宿主机 | 最适合单机自托管和本地开发 |
+| Docker + Remote Runner | OpenClaw 和 Task API 在 Docker，runner 在另一台宿主机 | 最适合把 Docker 当产品壳、把执行留在真实机器侧 |
+| Cloud + Remote Runner | `server.js` 跑在云端或远程服务器，`worker.js` 跑在真正有 CLI 和文件权限的机器上 | 主要远控形态 |
+| Single Host | `server.js` 直接跑在主机上，runner 跑在同机或另一台主机上 | 可以这么用，但不是主产品叙事 |
 
 文档：
 
@@ -153,7 +160,7 @@ cd docker
 docker compose up -d
 ```
 
-这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。Docker 侧是控制平面，本地 runner 仍然是执行平面。
+这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。Docker 侧是控制平面；runner 侧始终是执行平面，不管它和 Docker 在同一台机器还是远端机器。
 
 ## 仓库结构
 

@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README_CN.md)
 
-Docker-first local runner and reconciler for OpenClaw CLI orchestration. The core idea is portable, but the production-tested workflow in this repository is still macOS-first.
+Docker-first execution plane for OpenClaw-compatible agents. The control plane can run locally in Docker or on a remote server, while the runner executes on the host that actually owns the CLI, files, shell, and local session state.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
@@ -24,9 +24,15 @@ This repository should not be described as "just a polling worker".
 The intended product shape is:
 
 - Docker-first control plane
-- Local runner with real file and CLI access
+- Host-side runner with real file and CLI access
 - Hook-accelerated callback delivery
 - Reconciler loop for task pickup, recovery, and audit-safe fallback
+
+Practical deployment story:
+
+- Run the control plane in local Docker when you want a self-hosted setup on one machine
+- Run the control plane on a remote server when you want cloud-hosted orchestration
+- Keep the runner on the machine that actually has Claude Code, Codex, Gemini, files, shell, and browser context
 
 Long polling is still used as transport for task pickup, but it is no longer the primary product story.
 
@@ -85,26 +91,27 @@ Recent productized additions:
 
 ## What It Does
 
-OpenClaw Docker Runner adds a queue boundary between cloud orchestration and local execution:
+OpenClaw Docker Runner adds a safe execution boundary between an OpenClaw-compatible control plane and the machine that owns real local capability:
 
 - A client or bot submits tasks to `server.js`
-- The local runner pulls work through a reconciler loop
-- The runner executes commands or local AI CLI tasks
+- The runner pulls work through a reconciler loop
+- The runner executes commands or local AI CLI tasks on the host machine
 - Results are sent back to the Task API
 - Optional callbacks can push completion messages back to the bot side with hook-first delivery
 - Recent lifecycle events stay queryable through the Task API for debugging and audit
 
 ```text
-Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
+Client / Bot / OpenClaw -> Task API -> Host Runner / Reconciler -> Local CLI / Files / Browser / Claude Code
 ```
 
 ## Deployment Modes
 
 | Mode | What runs where | Notes |
 |------|------------------|-------|
-| Cloud + Local Runner | `server.js` on cloud, `worker.js` on local machine | Main remote-control pattern |
-| Docker Local | OpenClaw and Task API in Docker, runner on local host | Matches the author's main local setup |
-| Bare Metal API | `server.js` directly on a host, runner on another machine | Possible, but less documented here |
+| Docker Local | OpenClaw and Task API in Docker on the same machine, runner on the host | Best “all on one machine” developer setup |
+| Docker + Remote Runner | OpenClaw and Task API in Docker, runner on another host | Best fit when Docker is the product shell but execution must stay near the real machine |
+| Cloud + Remote Runner | `server.js` on a cloud host, `worker.js` on the machine with the actual CLI and files | Main remote-control pattern |
+| Single Host | `server.js` directly on a host, runner on the same or another host | Possible, but not the primary product story |
 
 Docs:
 
@@ -153,7 +160,7 @@ cd docker
 docker compose up -d
 ```
 
-This Docker topology expects host mounts for local session data and Docker callback access. The Docker side is the control plane; the local runner remains the execution plane.
+This Docker topology expects host mounts for local session data and Docker callback access. The Docker side is the control plane; the runner side remains the execution plane whether that runner is on the same machine or a remote host.
 
 ## Repository Layout
 
