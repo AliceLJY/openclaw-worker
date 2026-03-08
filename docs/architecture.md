@@ -4,8 +4,8 @@
 
 ```
 ┌─────────────┐     ┌─────────────────────────────────────────────────┐     ┌─────────────────────────────┐
-│   用户      │     │              云端 (AWS)                          │     │        本地 Mac             │
-│  (Discord)  │────▶│  Discord Bot ←→ OpenClaw ←→ Task API            │◀────│  Worker ←→ 本地CC/Skills    │
+│   用户      │     │              云端 (AWS / Docker)                 │     │        本地 Mac             │
+│  (Discord)  │────▶│  Discord Bot / CLI Bridge ←→ Task API           │◀────│  Runner ←→ 本地CC/Skills    │
 └─────────────┘     └─────────────────────────────────────────────────┘     └─────────────────────────────┘
 ```
 
@@ -15,7 +15,7 @@
 |------|------|--------|------|
 | Discord Bot | 云端 AWS | OpenClaw + MiniMax M2.5 | 用户入口，消息处理 |
 | Task API | 云端/本地 | Node.js/Express | 任务队列，转发到本地 |
-| Worker | 本地 Mac | Node.js | 轮询任务，调用本地资源 |
+| Local Runner / Reconciler | 本地 Mac | Node.js | 领取任务，调用本地资源，负责兜底恢复 |
 | 本地 CC | 本地 Mac | Claude Code CLI (Max 订阅, OAuth) | AI 任务执行 |
 | content-publisher | 本地 Mac | TypeScript/Bun | 配图+排版+发布 |
 
@@ -63,20 +63,20 @@ Bot 需要记住 Task API 的调用方式（见 Bot 记忆章节）
 - **本地模式**：运行在本地 Docker 容器中
 
 ### 作用
-作为云端 Bot 和本地 Worker 之间的桥梁：
+作为云端控制平面和本地 runner 之间的桥梁：
 1. 云端 Bot 提交任务到 Task API
-2. 本地 Worker 轮询 Task API 获取任务
-3. Worker 在本地执行，结果返回给 Bot
+2. 本地 runner 通过 reconciler 循环获取任务
+3. runner 在本地执行，结果返回给 Bot
 
 ---
 
-## 4. 本地 Worker
+## 4. 本地 Runner / Reconciler
 
 ### 部署
 - 运行在本地 Mac
 - 使用 **launchd** 实现开机自启和崩溃重启
 
-### Worker 配置 (launchd)
+### Runner 配置 (launchd)
 
 创建文件 `~/Library/LaunchAgents/com.openclaw.worker.plist`：
 

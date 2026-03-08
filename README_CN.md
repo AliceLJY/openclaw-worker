@@ -30,6 +30,12 @@
 
 长轮询仍然保留，但它只是领任务的传输实现，不应该再作为产品主叙事。
 
+## 产品谱系
+
+- `openclaw-cli-pipeline` 已归档，应被视为历史阶段的协议设计
+- 它的多轮编排模型现在已经并入 [`openclaw-cli-bridge`](https://github.com/AliceLJY/openclaw-cli-bridge)
+- 这个仓库继续负责执行平面：Task API、本地 runner、reconciler 循环，以及 callback 回投
+
 ## 兼容性说明
 
 - `server` 这一侧相对通用。

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Pipeline 谱系收口
+
+### Changed
+- **产品谱系**：明确 `openclaw-cli-pipeline` 已归档，并将其定位为历史协议设计
+- **现役入口**：将多轮编排入口统一指向 `openclaw-cli-bridge`
+- **架构文档**：补充 `Docker control plane + local runner / reconciler` 的产品口径
+
 ## [2026-03-08] - Docker Runner 命名收口
 
 ### Changed

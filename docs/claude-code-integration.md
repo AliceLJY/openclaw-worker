@@ -310,7 +310,11 @@ Without `callbackChannel`, no notification is sent — results are only availabl
 
 ### Multi-Turn Orchestration
 
-For chaining multiple rounds of CC execution (e.g., the 3-round Content Alchemy workflow), see [openclaw-cli-pipeline](https://github.com/AliceLJY/openclaw-cli-pipeline). That skill defines the full protocol: how the Bot extracts `sessionId` from callbacks, collects user feedback, and dispatches subsequent rounds with `--resume`.
+For chaining multiple rounds of CC execution, use [`openclaw-cli-bridge`](https://github.com/AliceLJY/openclaw-cli-bridge) as the current control-plane entrypoint.
+
+- Use slash commands such as `/cc` when you want direct CLI conversation with zero middle-agent token overhead
+- Use delegated tools only when the bot actually needs to plan or coordinate a follow-up task
+- Treat [`openclaw-cli-pipeline`](https://github.com/AliceLJY/openclaw-cli-pipeline) as archived lineage: its protocol ideas were folded into the bridge rather than maintained as a separate runtime
 
 ---
 

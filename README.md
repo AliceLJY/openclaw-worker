@@ -30,6 +30,12 @@ The intended product shape is:
 
 Long polling is still used as transport for task pickup, but it is no longer the primary product story.
 
+## Product Lineage
+
+- `openclaw-cli-pipeline` is archived and should be treated as historical protocol design
+- Its multi-turn orchestration model is now absorbed by [`openclaw-cli-bridge`](https://github.com/AliceLJY/openclaw-cli-bridge)
+- This repository remains the execution plane: Task API, local runner, reconciler loop, and callback delivery
+
 ## Compatibility Notes
 
 - The server side is relatively generic.
