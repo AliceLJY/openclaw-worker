@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Event Ops and Reconcile Audit
+
+### Added
+- **事件运维面**：新增 `/events/stats` 和 `/events/maintenance`，可以查看统计信息并执行手动 vacuum / trim
+- **保留策略**：支持 `WORKER_EVENT_RETENTION_DAYS` 和 `WORKER_MAX_EVENTS` 控制事件保留
+- **调和审计**：客户端真正取走结果时，会补记 `task.reconciled`
+
+### Changed
+- **自动维护**：Task API 启动时和后台清理循环中都会自动 trim 事件库
+- **健康面**：`/health` 现在会返回事件库路径、保留天数、大小和上限
+- **README**：文档补齐 event ops、retention 和 reconcile 语义
 ## [2026-03-08] - SQLite Event Store
 
 ### Added

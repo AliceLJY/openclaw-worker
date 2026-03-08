@@ -25,7 +25,8 @@ const DEFAULT_POLL_WAIT_MS = 30000;
 const MAX_POLL_WAIT_MS = 60000;
 const MIN_TASK_TIMEOUT_MS = 1000;
 const MAX_TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
-const MAX_EVENTS = 2000;
+const MAX_EVENTS = parseBoundedInt(process.env.WORKER_MAX_EVENTS, 2000, { min: 100, max: 500000 });
+const EVENT_RETENTION_DAYS = parseBoundedInt(process.env.WORKER_EVENT_RETENTION_DAYS, 14, { min: 1, max: 3650 });
 const EVENT_DB_PATH = process.env.WORKER_EVENT_DB || '/tmp/openclaw-runner-events.db';
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
@@ -152,18 +153,7 @@ function appendEvent(type, task, extra = {}) {
     event.details ? JSON.stringify(event.details) : null
   );
 
-  const countRow = db.prepare(`SELECT COUNT(*) AS count FROM events`).get();
-  const count = Number(countRow?.count || 0);
-  if (count > MAX_EVENTS) {
-    db.prepare(`
-      DELETE FROM events
-      WHERE id IN (
-        SELECT id FROM events
-        ORDER BY created_at DESC
-        LIMIT -1 OFFSET ?
-      )
-    `).run(MAX_EVENTS);
-  }
+  trimEvents();
 
   return event;
 }
@@ -171,6 +161,100 @@ function appendEvent(type, task, extra = {}) {
 function countEvents() {
   const row = getEventDb().prepare(`SELECT COUNT(*) AS count FROM events`).get();
   return Number(row?.count || 0);
+}
+
+function getEventDbSizeBytes() {
+  try {
+    return fs.statSync(EVENT_DB_PATH).size;
+  } catch {
+    return 0;
+  }
+}
+
+function trimEvents() {
+  const db = getEventDb();
+  const cutoff = Date.now() - (EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const deletedExpired = db.prepare(`DELETE FROM events WHERE created_at < ?`).run(cutoff).changes;
+
+  const countRow = db.prepare(`SELECT COUNT(*) AS count FROM events`).get();
+  const count = Number(countRow?.count || 0);
+  const deletedOverflow = count > MAX_EVENTS
+    ? db.prepare(`
+      DELETE FROM events
+      WHERE id IN (
+        SELECT id FROM events
+        ORDER BY created_at DESC
+        LIMIT -1 OFFSET ?
+      )
+    `).run(MAX_EVENTS).changes
+    : 0;
+
+  return {
+    cutoff,
+    deletedExpired,
+    deletedOverflow,
+    count: countEvents(),
+  };
+}
+
+function vacuumEvents() {
+  getEventDb().exec('VACUUM');
+}
+
+function getEventStats() {
+  const db = getEventDb();
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) AS count,
+      MIN(created_at) AS oldest_created_at,
+      MAX(created_at) AS newest_created_at
+    FROM events
+  `).get();
+  const byTypeRows = db.prepare(`
+    SELECT type, COUNT(*) AS count
+    FROM events
+    GROUP BY type
+    ORDER BY count DESC, type ASC
+  `).all();
+  const byStatusRows = db.prepare(`
+    SELECT COALESCE(task_status, 'unknown') AS task_status, COUNT(*) AS count
+    FROM events
+    GROUP BY COALESCE(task_status, 'unknown')
+    ORDER BY count DESC, task_status ASC
+  `).all();
+
+  return {
+    path: EVENT_DB_PATH,
+    sizeBytes: getEventDbSizeBytes(),
+    count: Number(totals?.count || 0),
+    oldestCreatedAt: totals?.oldest_created_at ?? null,
+    newestCreatedAt: totals?.newest_created_at ?? null,
+    retentionDays: EVENT_RETENTION_DAYS,
+    maxEvents: MAX_EVENTS,
+    byType: byTypeRows.map((row) => ({
+      type: row.type,
+      count: Number(row.count || 0),
+    })),
+    byStatus: byStatusRows.map((row) => ({
+      taskStatus: row.task_status,
+      count: Number(row.count || 0),
+    })),
+  };
+}
+
+function runEventMaintenance({ vacuum = false } = {}) {
+  const before = getEventStats();
+  const trim = trimEvents();
+  if (vacuum) {
+    vacuumEvents();
+  }
+  const after = getEventStats();
+  return {
+    vacuumed: vacuum,
+    trim,
+    before,
+    after,
+  };
 }
 
 function listEvents({ limit, taskId, type }) {
@@ -246,6 +330,16 @@ function getSerializedSessionKey(task) {
 function consumeTaskResult(taskId) {
   if (!results.has(taskId)) return null;
   const result = results.get(taskId);
+  const task = tasks.get(taskId);
+  appendEvent('task.reconciled', task, {
+    taskId,
+    taskStatus: task?.status || null,
+    sessionId: result?.metadata?.sessionId || task?.sessionId || null,
+    details: {
+      exitCode: result?.exitCode ?? null,
+      reconciledBy: 'task-result-fetch',
+    },
+  });
   results.delete(taskId);
   tasks.delete(taskId);
   return result;
@@ -353,6 +447,12 @@ app.get('/health', (req, res) => {
     results: results.size,
     activeSessions: activeSessions.size,
     events: countEvents(),
+    eventDb: {
+      path: EVENT_DB_PATH,
+      retentionDays: EVENT_RETENTION_DAYS,
+      maxEvents: MAX_EVENTS,
+      sizeBytes: getEventDbSizeBytes(),
+    },
   });
 });
 
@@ -364,6 +464,18 @@ app.get('/events', auth, (req, res) => {
   res.json({
     events: listEvents({ limit, taskId, type }),
   });
+});
+
+app.get('/events/stats', auth, (req, res) => {
+  res.json({
+    stats: getEventStats(),
+  });
+});
+
+app.post('/events/maintenance', auth, (req, res) => {
+  const vacuum = Boolean(req.body?.vacuum);
+  const result = runEventMaintenance({ vacuum });
+  res.json(result);
 });
 
 // [云端 OpenClaw 调用] 提交任务
@@ -880,11 +992,15 @@ setInterval(() => {
       activeSessions.delete(sessionId);
     }
   }
+
+  trimEvents();
 }, 60000);
 
 // ========== 启动 ==========
 app.listen(PORT, '0.0.0.0', () => {
+  trimEvents();
   console.log(`✅ Task API running on :${PORT}`);
   console.log(`   Token : ${AUTH_TOKEN.slice(0, 4)}${'*'.repeat(AUTH_TOKEN.length - 4)}`);
   console.log(`   Notify: ${process.env.DISCORD_BOT_TOKEN ? '✓ DISCORD_BOT_TOKEN set' : '✗ no DISCORD_BOT_TOKEN'}`);
+  console.log(`   Events: ${EVENT_DB_PATH} | retention=${EVENT_RETENTION_DAYS}d | max=${MAX_EVENTS}`);
 });

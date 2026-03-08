@@ -33,7 +33,9 @@ Long polling is still used as transport for task pickup, but it is no longer the
 Recent productized additions:
 
 - SQLite-backed event log with `/events` query API for recent task and callback lifecycle
+- `/events/stats` and `/events/maintenance` for retention, vacuum, and audit-facing event ops
 - clearer `task.created / task.started / task.completed / task.failed / callback.*` event trail
+- `task.reconciled` when a client actually consumes a finished task result
 - reconciler naming in scripts and runtime logs, while keeping legacy endpoints for compatibility
 
 ## Product Lineage
@@ -189,6 +191,22 @@ curl -H "Authorization: Bearer $WORKER_TOKEN" \
   "http://localhost:3456/events?limit=50"
 ```
 
+Event stats:
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/events/stats"
+```
+
+Manual maintenance:
+
+```bash
+curl -X POST -H "Authorization: Bearer $WORKER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"vacuum": true}' \
+  "http://localhost:3456/events/maintenance"
+```
+
 Default event database:
 
 ```text
@@ -199,6 +217,8 @@ Override with:
 
 ```bash
 WORKER_EVENT_DB=/path/to/openclaw-runner-events.db
+WORKER_EVENT_RETENTION_DAYS=14
+WORKER_MAX_EVENTS=2000
 ```
 
 Useful filters:
@@ -212,6 +232,7 @@ Common event types:
 - `task.started`
 - `task.completed`
 - `task.failed`
+- `task.reconciled`
 - `callback.dispatched`
 - `callback.sent`
 - `callback.failed`
