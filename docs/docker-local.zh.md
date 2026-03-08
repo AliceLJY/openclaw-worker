@@ -107,6 +107,16 @@ docker compose down -v                    # 清理
 | 18790 | OpenClaw Bridge |
 | 3456 | Task API |
 
+## 关键状态变量
+
+| 变量 | 说明 |
+|------|------|
+| `WORKER_TASK_DB` | Task API 持久化任务队列和未取走结果的 SQLite 路径 |
+| `WORKER_EVENT_DB` | Task API 事件库 SQLite 路径 |
+| `WORKER_SESSION_RETENTION_MS` | Task API 活跃 session 的保留时间 |
+| `RUNNER_SESSION_CACHE_FILE` | 本地 runner provider cache 文件路径 |
+| `RUNNER_SESSION_RETENTION_MS` | 本地 runner provider cache 的保留时间 |
+
 ---
 
 ## 故障排查
@@ -126,6 +136,20 @@ curl http://localhost:3456/health
 claude auth status
 ```
 
+```bash
+# 任务队列和未取走结果
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/tasks/stats
+
+# 活跃 session
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/sessions/stats
+
+# 事件库
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/events/stats
+```
+
 ---
 
 ## 安全
@@ -133,3 +157,11 @@ claude auth status
 - Docker 隔离：OpenClaw 无法直接访问系统
 - 权限分离：CC 权限在 Worker，不在 Docker
 - 本地网络：不暴露公网
+
+## 状态模型说明
+
+- Docker 内的 Task API 持久化任务、未取走结果、活跃 session 和事件
+- 宿主机上的 runner 另外维护一份 provider cache，用于 resume 映射和 provider 级恢复
+- 这两层不是重复设计：
+  - Task API 状态 = 控制面视角
+  - runner cache = 宿主机 provider 恢复视角

@@ -157,6 +157,11 @@ docker compose down -v
 | `WORKER_TOKEN` | Worker 与 Task API 通信 Token |
 | `OPENCLAW_CONFIG_DIR` | OpenClaw 配置目录 |
 | `OPENCLAW_WORKSPACE_DIR` | 工作区目录 |
+| `WORKER_TASK_DB` | Task API 持久化任务队列和未取走结果的 SQLite 路径 |
+| `WORKER_EVENT_DB` | Task API 事件库 SQLite 路径 |
+| `WORKER_SESSION_RETENTION_MS` | Task API 活跃 session 的保留时间 |
+| `RUNNER_SESSION_CACHE_FILE` | 本地 runner provider cache 文件路径 |
+| `RUNNER_SESSION_RETENTION_MS` | 本地 runner provider cache 的保留时间 |
 
 ### 端口映射
 
@@ -191,6 +196,22 @@ curl http://localhost:3456/health
 grep WORKER_TOKEN .env
 ```
 
+### 2.1 查看持久化状态面
+
+```bash
+# 任务队列和未取走结果
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/tasks/stats
+
+# 活跃 session
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/sessions/stats
+
+# 事件库
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  http://localhost:3456/events/stats
+```
+
 ### 3. CC 认证失败
 
 ```bash
@@ -218,6 +239,16 @@ claude login
 2. 云端方案使用云端 IP + 端口
 
 切换方式：修改 Worker 的 `WORKER_URL` 环境变量即可。
+
+---
+
+## 状态模型说明
+
+- Docker 里的 Task API 持久化任务、未取走结果、活跃 session 和事件
+- 宿主机上的 runner 另外维护一份 provider cache，用于 resume 映射和 provider 级恢复
+- 这两层不是重复设计：
+  - Task API 状态 = 控制面视角
+  - runner cache = 宿主机 provider 恢复视角
 
 ---
 

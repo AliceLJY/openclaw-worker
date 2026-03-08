@@ -41,6 +41,7 @@
 - SQLite 持久化任务队列和结果存储，Task API 重启后待处理任务不会直接丢失
 - SQLite 持久化活跃会话状态，并提供只读 session stats / state 接口
 - SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
+- runner 侧 provider cache 也有了显式路径和 retention 配置
 - `/tasks/stats` 用来查看队列规模和未取走结果数量
 - `/sessions/stats` 和 `/sessions/state` 用来查看活跃 CLI 会话状态
 - `/events/stats` 和 `/events/maintenance`，用于 retention、vacuum 和事件面运维
@@ -70,7 +71,7 @@
 - 回调通知是否可用，可能取决于你的 Docker 容器访问拓扑。
 - Worker 主流程会通过 `/bin/zsh -l -c` 执行 shell 命令。
 - Claude session 恢复逻辑默认依赖本地 `~/.claude/projects/...` 存储布局。
-- Session 缓存会写到 `/tmp/cc-sessions.json`。
+- Task API 的 session 状态会持久化到 SQLite 任务库；runner 侧另外保留一份本地 provider cache，默认路径是 `/tmp/openclaw-runner-session-cache.json`。
 - 执行默认工作目录是 `$HOME`。
 
 ## 前置条件
@@ -129,7 +130,7 @@ Client / Bot / OpenClaw -> Task API -> Host Runner / Reconciler -> Local CLI / F
 - `worker.js` 开头就把自己定义成 Mac 本地 Worker。
 - `worker.js` 通过 `/bin/zsh -l -c` 执行命令。
 - `worker.js` 会在 `~/.claude/projects/-Users-<home-name>/` 下解析 Claude session。
-- `worker.js` 会把 session 状态写到 `/tmp/cc-sessions.json`。
+- `worker.js` 默认会把本地 provider session cache 写到 `/tmp/openclaw-runner-session-cache.json`。
 - `worker.js` 默认把 `$HOME` 当作 `cwd`。
 - `docker/docker-compose.yml` 会挂载 `~/.claude/projects`、`~/.codex/sessions` 和 `/var/run/docker.sock`。
 - [examples/macos-startup.command](examples/macos-startup.command) 默认用 `screen` 加 `node worker.js` 启动 Worker。
@@ -161,6 +162,14 @@ docker compose up -d
 ```
 
 这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。Docker 侧是控制平面；runner 侧始终是执行平面，不管它和 Docker 在同一台机器还是远端机器。
+
+### 4. 运行 smoke test
+
+```bash
+npm run smoke:task-api
+```
+
+这会验证 task、session、event 在 Task API 重启前后都能保留。
 
 ## 仓库结构
 
@@ -292,6 +301,8 @@ curl -H "Authorization: Bearer $WORKER_TOKEN" \
 
 ```bash
 WORKER_SESSION_RETENTION_MS=1800000
+RUNNER_SESSION_CACHE_FILE=/path/to/openclaw-runner-session-cache.json
+RUNNER_SESSION_RETENTION_MS=1800000
 ```
 
 行为说明：
@@ -299,6 +310,7 @@ WORKER_SESSION_RETENTION_MS=1800000
 - 活跃 session 状态会跨 Task API 重启保留
 - `/claude/sessions` 现在也改成读持久化 session store
 - 过期 session 会在后台清理中自动 trim
+- runner 侧还会保留一份本地 provider cache，用于 resume 映射和 provider 级 session 恢复
 
 ## 作者
 

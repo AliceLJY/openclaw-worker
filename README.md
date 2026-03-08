@@ -41,6 +41,7 @@ Recent productized additions:
 - SQLite-backed task queue and result store so pending work survives Task API restarts
 - SQLite-backed active session store with read-only session stats and state APIs
 - SQLite-backed event log with `/events` query API for recent task and callback lifecycle
+- A runner-side provider cache with explicit env-configurable path and retention
 - `/tasks/stats` for queue visibility and persisted result counts
 - `/sessions/stats` and `/sessions/state` for active CLI session visibility
 - `/events/stats` and `/events/maintenance` for retention, vacuum, and audit-facing event ops
@@ -70,7 +71,7 @@ Recent productized additions:
 - Callback delivery may rely on Docker container access, depending on your topology.
 - The main Worker flow executes shell commands through `/bin/zsh -l -c`.
 - Claude session recovery assumes a local `~/.claude/projects/...` storage layout.
-- Session cache is persisted at `/tmp/cc-sessions.json`.
+- Task API session state is persisted in the SQLite task store, while the runner keeps a local provider cache at `/tmp/openclaw-runner-session-cache.json` by default.
 - The default working directory for execution is `$HOME`.
 
 ## Prerequisites
@@ -129,7 +130,7 @@ These are not theoretical. They are encoded in the current implementation:
 - `worker.js` identifies itself as a local Mac Worker.
 - `worker.js` executes commands through `/bin/zsh -l -c`.
 - `worker.js` resolves Claude sessions under `~/.claude/projects/-Users-<home-name>/`.
-- `worker.js` stores session state in `/tmp/cc-sessions.json`.
+- `worker.js` keeps a local provider-session cache in `/tmp/openclaw-runner-session-cache.json` by default.
 - `worker.js` defaults `cwd` to `$HOME`.
 - `docker/docker-compose.yml` mounts `~/.claude/projects`, `~/.codex/sessions`, and `/var/run/docker.sock`.
 - [examples/macos-startup.command](examples/macos-startup.command) starts the Worker with `screen` plus `node worker.js`.
@@ -161,6 +162,14 @@ docker compose up -d
 ```
 
 This Docker topology expects host mounts for local session data and Docker callback access. The Docker side is the control plane; the runner side remains the execution plane whether that runner is on the same machine or a remote host.
+
+### 4. Run the smoke test
+
+```bash
+npm run smoke:task-api
+```
+
+This verifies task persistence, session persistence, and event persistence across a Task API restart.
 
 ## Repository Layout
 
@@ -292,6 +301,8 @@ Override session retention with:
 
 ```bash
 WORKER_SESSION_RETENTION_MS=1800000
+RUNNER_SESSION_CACHE_FILE=/path/to/openclaw-runner-session-cache.json
+RUNNER_SESSION_RETENTION_MS=1800000
 ```
 
 Behavior notes:
@@ -299,6 +310,7 @@ Behavior notes:
 - Active session state survives Task API restarts
 - `/claude/sessions` now reads from the persisted session store
 - Expired sessions are trimmed by retention cleanup
+- The runner also keeps a local provider cache for resume mapping and provider-specific session recovery
 
 ## Author
 

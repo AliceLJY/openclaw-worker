@@ -51,6 +51,13 @@ services:
       - WORKER_TOKEN=${WORKER_TOKEN}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - PORT=3456
+      - WORKER_TASK_DB=${WORKER_TASK_DB:-/tmp/openclaw-runner-tasks.db}
+      - WORKER_EVENT_DB=${WORKER_EVENT_DB:-/tmp/openclaw-runner-events.db}
+      - WORKER_SESSION_RETENTION_MS=${WORKER_SESSION_RETENTION_MS:-1800000}
+      - WORKER_TASK_RETENTION_MS=${WORKER_TASK_RETENTION_MS:-1200000}
+      - WORKER_RESULT_RETENTION_MS=${WORKER_RESULT_RETENTION_MS:-1800000}
+      - WORKER_EVENT_RETENTION_DAYS=${WORKER_EVENT_RETENTION_DAYS:-14}
+      - WORKER_MAX_EVENTS=${WORKER_MAX_EVENTS:-2000}
       - CALLBACK_CONTAINER=openclaw-gateway  # Default: 睿智bot; per-request callbackContainer overrides
     networks:
       - openclaw-net

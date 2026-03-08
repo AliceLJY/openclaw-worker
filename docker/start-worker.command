@@ -30,12 +30,15 @@ echo "=========================================="
 echo ""
 echo "Task API: http://localhost:3456"
 echo "Worker:   $PROJECT_ROOT/worker.js"
+echo "Cache:    ${RUNNER_SESSION_CACHE_FILE:-/tmp/openclaw-runner-session-cache.json}"
 echo ""
 
 # Start with login shell (for Keychain access)
 screen -dmS worker bash -l -c "cd $PROJECT_ROOT && \
   WORKER_URL=http://localhost:3456 \
   WORKER_TOKEN=$WORKER_TOKEN \
+  RUNNER_SESSION_CACHE_FILE=${RUNNER_SESSION_CACHE_FILE:-/tmp/openclaw-runner-session-cache.json} \
+  RUNNER_SESSION_RETENTION_MS=${RUNNER_SESSION_RETENTION_MS:-1800000} \
   POLL_INTERVAL=500 \
   MAX_CONCURRENT=3 \
   node worker.js"

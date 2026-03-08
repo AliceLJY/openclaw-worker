@@ -52,6 +52,9 @@ const CONFIG = {
   // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
   openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
   openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
+  // runner 本地 provider session cache，仅供本机 resume / 映射恢复使用
+  runnerSessionCacheFile: process.env.RUNNER_SESSION_CACHE_FILE || '/tmp/openclaw-runner-session-cache.json',
+  runnerSessionRetentionMs: parseConfigInt(process.env.RUNNER_SESSION_RETENTION_MS, 30 * 60 * 1000, 60 * 1000, 30 * 24 * 60 * 60 * 1000),
 };
 
 if (CONFIG.token === 'change-me-to-a-secure-token') {
@@ -65,6 +68,7 @@ console.log(`Task API: ${CONFIG.serverUrl}`);
 console.log(`调和等待窗口: ${CONFIG.longPollWait}ms`);
 console.log(`最大并发: ${CONFIG.maxConcurrent} 个任务`);
 console.log(`执行模式: ${sdkQuery ? 'Agent SDK (优先)' : 'CLI (回退)'}`);
+console.log(`Runner cache: ${CONFIG.runnerSessionCacheFile}`);
 console.log('');
 console.log('支持的任务类型:');
 console.log('  - command: 执行 shell 命令');
@@ -276,8 +280,8 @@ function editFileOnDisk(filePath, oldString, newString, replaceAll) {
   });
 }
 
-// ========== 会话管理 ==========
-const SESSION_FILE = '/tmp/cc-sessions.json';
+// ========== Runner 本地 provider session cache ==========
+const SESSION_FILE = CONFIG.runnerSessionCacheFile;
 const liveSessions = new Map();   // sdkSessionId → { lastActivity, callbackChannel }
 const sessionIdMap = new Map();   // taskApiSessionId → sdkSessionId（映射表）
 const ccSessions = new Set();     // CLI 模式用：跟踪已创建的 CC 会话
@@ -386,7 +390,7 @@ function loadSessions() {
         sessionIdMap.set(s.taskApiId, s.sessionId);
       }
     }
-    console.log(`[会话] 恢复了 ${liveSessions.size} 个会话记录`);
+    console.log(`[会话] 恢复了 ${liveSessions.size} 个 runner cache 记录`);
   } catch {
     // 文件不存在或格式错误，忽略
   }
@@ -413,13 +417,13 @@ function saveSessions() {
 
 loadSessions();
 
-// 每 5 分钟清理超过 30 分钟不活跃的会话
+// 每 5 分钟清理超过保留时间的不活跃 provider session cache
 setInterval(() => {
   const now = Date.now();
   let cleaned = 0;
   for (const [id] of liveSessions) {
     const session = liveSessions.get(id);
-    if (now - session.lastActivity > 30 * 60 * 1000) {
+    if (now - session.lastActivity > CONFIG.runnerSessionRetentionMs) {
       liveSessions.delete(id);
       ccSessions.delete(id);
       // 清理映射表中指向该 SDK session 的条目

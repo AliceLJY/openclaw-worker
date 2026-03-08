@@ -146,6 +146,11 @@ docker compose -p openclaw-local down -v
 | `WORKER_TOKEN` | Worker 与 Task API 通信 Token |
 | `OPENCLAW_CONFIG_DIR` | OpenClaw 配置目录 |
 | `OPENCLAW_WORKSPACE_DIR` | 工作区目录 |
+| `WORKER_TASK_DB` | Task API 持久化任务和未取走结果的 SQLite 路径 |
+| `WORKER_EVENT_DB` | Task API 事件库 SQLite 路径 |
+| `WORKER_SESSION_RETENTION_MS` | Task API 活跃 session 保留时间 |
+| `RUNNER_SESSION_CACHE_FILE` | 本地 runner provider cache 文件路径 |
+| `RUNNER_SESSION_RETENTION_MS` | 本地 runner provider cache 保留时间 |
 
 ### 端口映射
 
@@ -178,6 +183,14 @@ curl http://localhost:3456/health
 
 # 检查 Token 是否一致
 grep WORKER_TOKEN .env
+```
+
+### 2.1 查看状态面
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" http://localhost:3456/tasks/stats
+curl -H "Authorization: Bearer $WORKER_TOKEN" http://localhost:3456/sessions/stats
+curl -H "Authorization: Bearer $WORKER_TOKEN" http://localhost:3456/events/stats
 ```
 
 ### 3. CC 认证失败
@@ -217,6 +230,16 @@ docker restart openclaw-gateway
 ```
 
 **已知问题**：WiFi 恢复后如果 DNS 还没通，autoheal 可能重启太早导致 Discord 登录失败。通常等 1-2 分钟会自动再试成功。如果持续失败，检查 Discord 是否有频率限制（rate limit）。
+
+---
+
+## 状态模型
+
+- Task API 持久化任务、未取走结果、活跃 session 和事件
+- 本地 runner 另外维护 provider cache，用于 resume 映射和 provider 级恢复
+- 这两层各司其职：
+  - Task API 状态 = 控制面视角
+  - runner cache = 宿主机 provider 恢复视角
 
 ---
 

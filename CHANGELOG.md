@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Runner Cache and Smoke Test
+
+### Added
+- **Smoke Test**：新增 `npm run smoke:task-api`，可重复验证任务、session、事件的持久化主链路
+- **Runner 配置**：支持 `RUNNER_SESSION_CACHE_FILE` 和 `RUNNER_SESSION_RETENTION_MS`
+
+### Changed
+- **状态口径**：明确区分 Task API 的持久化 session store 和 runner 侧 provider cache
+- **Docker 文档**：补齐 task db、event db、session retention 和 runner cache 的配置说明
+- **示例脚本**：`examples/macos-startup.command` 现在显式展示 runner cache 路径
+
 ## [2026-03-08] - Docker-First Product Positioning
 
 ### Changed

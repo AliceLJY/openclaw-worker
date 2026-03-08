@@ -1,6 +1,6 @@
 {
   "name": "openclaw-worker",
-  "version": "5.6.1",
+  "version": "5.7.0",
   "description": "Docker-first execution plane for OpenClaw-compatible CLI agents",
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "reconciler": "node worker.js",
     "server": "node server.js",
     "worker": "node worker.js",
+    "smoke:task-api": "node scripts/task-api-smoke.mjs",
     "test": "node mac-remote-tool.cjs"
   },
   "dependencies": {
