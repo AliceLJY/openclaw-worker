@@ -59,6 +59,11 @@ function normalizeOptionalString(value) {
   return trimmed || null;
 }
 
+function normalizeEnum(value, allowed, fallback) {
+  const normalized = normalizeOptionalString(value);
+  return normalized && allowed.has(normalized) ? normalized : fallback;
+}
+
 function parseTaskTimeout(value, fallback) {
   return parseBoundedInt(value, fallback, { min: MIN_TASK_TIMEOUT_MS, max: MAX_TASK_TIMEOUT_MS });
 }
@@ -66,6 +71,15 @@ function parseTaskTimeout(value, fallback) {
 function previewText(text, max = 50) {
   const compact = String(text ?? '').replace(/\s+/g, ' ').trim();
   return compact.length > max ? `${compact.slice(0, max)}...` : compact;
+}
+
+function extractDispatchMeta(body, defaultEntrypoint) {
+  return {
+    origin: normalizeOptionalString(body?.origin) || 'unknown',
+    dispatchMode: normalizeEnum(body?.dispatchMode, new Set(['direct-command', 'agent-tool']), 'unspecified'),
+    responseMode: normalizeEnum(body?.responseMode, new Set(['direct-callback']), 'direct-callback'),
+    entrypoint: normalizeOptionalString(body?.entrypoint) || defaultEntrypoint,
+  };
 }
 
 function enqueueTask(payload) {
@@ -79,6 +93,14 @@ function enqueueTask(payload) {
   return task;
 }
 
+function getSerializedSessionKey(task) {
+  if (!task || !task.sessionId) return null;
+  if (task.type !== 'claude-cli' && task.type !== 'codex-cli' && task.type !== 'gemini-cli') {
+    return null;
+  }
+  return `${task.type}:${task.sessionId}`;
+}
+
 function consumeTaskResult(taskId) {
   if (!results.has(taskId)) return null;
   const result = results.get(taskId);
@@ -90,6 +112,17 @@ function consumeTaskResult(taskId) {
 function claimNextPendingTask() {
   for (const [taskId, task] of tasks) {
     if (task.status === 'pending') {
+      const sessionKey = getSerializedSessionKey(task);
+      if (sessionKey) {
+        const hasRunningSibling = Array.from(tasks.values()).some(other =>
+          other.id !== taskId &&
+          other.status === 'running' &&
+          getSerializedSessionKey(other) === sessionKey
+        );
+        if (hasRunningSibling) {
+          continue;
+        }
+      }
       task.status = 'running';
       console.log(`[Worker] Picked up: ${taskId}`);
       return task;
@@ -266,9 +299,22 @@ app.post('/worker/result', auth, (req, res) => {
     completedAt: Date.now()
   };
 
-  // 如果有 metadata，添加到结果中
-  if (metadata) {
-    result.metadata = metadata;
+  const task = tasks.get(taskId);
+  const baseMetadata = {
+    origin: task?.origin || 'unknown',
+    dispatchMode: task?.dispatchMode || 'unspecified',
+    responseMode: task?.responseMode || 'direct-callback',
+    entrypoint: task?.entrypoint || null,
+  };
+  if (metadata || Object.values(baseMetadata).some(Boolean)) {
+    result.metadata = {
+      ...baseMetadata,
+      ...(metadata || {}),
+    };
+  }
+  if (task) {
+    task.status = 'completed';
+    task.completedAt = result.completedAt;
   }
 
   results.set(taskId, result);
@@ -359,6 +405,7 @@ app.post('/claude', auth, (req, res) => {
   const { prompt, timeout = 120000, sessionId, callbackChannel, callbackBotToken } = req.body || {};
   const promptText = typeof prompt === 'string' ? prompt : '';
   const requestedSessionId = normalizeOptionalString(sessionId);
+  const dispatchMeta = extractDispatchMeta(req.body, 'cc');
 
   if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -373,6 +420,7 @@ app.post('/claude', auth, (req, res) => {
     sessionId: effectiveSessionId,
     callbackChannel: normalizeOptionalString(callbackChannel),
     callbackBotToken: normalizeOptionalString(callbackBotToken),
+    ...dispatchMeta,
   });
 
   // 更新会话跟踪
@@ -382,7 +430,7 @@ app.post('/claude', auth, (req, res) => {
   });
 
   const isResume = Boolean(requestedSessionId);
-  console.log(`[Claude] Task: ${task.id} [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
+  console.log(`[Claude] Task: ${task.id} [mode:${task.dispatchMode}] [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''}${task.entrypoint ? ' [via:' + task.entrypoint + ']' : ''} - ${previewText(promptText)}`);
 
   res.json({ taskId: task.id, sessionId: effectiveSessionId, message: 'Claude CLI task created' });
 });
@@ -394,25 +442,28 @@ app.post('/codex', auth, (req, res) => {
   const { prompt, timeout = 300000, sessionId, model, callbackChannel, callbackBotToken } = req.body || {};
   const promptText = typeof prompt === 'string' ? prompt : '';
   const normalizedSessionId = normalizeOptionalString(sessionId);
+  const dispatchMeta = extractDispatchMeta(req.body, 'codex');
 
   if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
+  const effectiveSessionId = normalizedSessionId || crypto.randomUUID();
   const task = enqueueTask({
     type: 'codex-cli',
     prompt: promptText,
     timeout: parseTaskTimeout(timeout, 300000),
-    sessionId: normalizedSessionId,
+    sessionId: effectiveSessionId,
     model: normalizeOptionalString(model),
     callbackChannel: normalizeOptionalString(callbackChannel),
     callbackBotToken: normalizeOptionalString(callbackBotToken),
+    ...dispatchMeta,
   });
 
   const isResume = Boolean(normalizedSessionId);
-  console.log(`[Codex] Task: ${task.id}${isResume ? ' [session:' + normalizedSessionId.slice(0, 8) + ',resume]' : ' [新会话]'}${task.model ? ' [' + task.model + ']' : ''}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
+  console.log(`[Codex] Task: ${task.id} [mode:${task.dispatchMode}] [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${task.model ? ' [' + task.model + ']' : ''}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''}${task.entrypoint ? ' [via:' + task.entrypoint + ']' : ''} - ${previewText(promptText)}`);
 
-  res.json({ taskId: task.id, message: 'Codex CLI task created' });
+  res.json({ taskId: task.id, sessionId: effectiveSessionId, message: 'Codex CLI task created' });
 });
 
 // [Discord/Telegram bridge 调用] 提交 Gemini CLI 任务（支持 session）
@@ -420,26 +471,29 @@ app.post('/gemini', auth, (req, res) => {
   const { prompt, timeout = 300000, sessionId, resumeLatest, model, callbackChannel, callbackBotToken } = req.body || {};
   const promptText = typeof prompt === 'string' ? prompt : '';
   const normalizedSessionId = normalizeOptionalString(sessionId);
+  const dispatchMeta = extractDispatchMeta(req.body, 'gemini');
 
   if (!promptText.trim()) {
     return res.status(400).json({ error: 'prompt is required' });
   }
 
+  const effectiveSessionId = normalizedSessionId || crypto.randomUUID();
   const task = enqueueTask({
     type: 'gemini-cli',
     prompt: promptText,
     timeout: parseTaskTimeout(timeout, 300000),
-    sessionId: normalizedSessionId,
-    resumeLatest: Boolean(resumeLatest),
+    sessionId: effectiveSessionId,
+    resumeLatest: Boolean(resumeLatest) || Boolean(normalizedSessionId),
     model: normalizeOptionalString(model),
     callbackChannel: normalizeOptionalString(callbackChannel),
     callbackBotToken: normalizeOptionalString(callbackBotToken),
+    ...dispatchMeta,
   });
 
-  const isResume = task.resumeLatest || Boolean(normalizedSessionId);
-  console.log(`[Gemini] Task: ${task.id}${isResume ? (task.resumeLatest ? ' [resume:latest]' : ' [session:' + normalizedSessionId.slice(0, 8) + ',resume]') : ' [新会话]'}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''} - ${previewText(promptText)}`);
+  const isResume = task.resumeLatest;
+  console.log(`[Gemini] Task: ${task.id} [mode:${task.dispatchMode}] [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume-latest' : ',new'}]${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''}${task.entrypoint ? ' [via:' + task.entrypoint + ']' : ''} - ${previewText(promptText)}`);
 
-  res.json({ taskId: task.id, message: 'Gemini CLI task created' });
+  res.json({ taskId: task.id, sessionId: effectiveSessionId, message: 'Gemini CLI task created' });
 });
 
 // ========== Discord 消息推送 ==========

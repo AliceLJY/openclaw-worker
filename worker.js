@@ -282,6 +282,69 @@ const liveSessions = new Map();   // sdkSessionId → { lastActivity, callbackCh
 const sessionIdMap = new Map();   // taskApiSessionId → sdkSessionId（映射表）
 const ccSessions = new Set();     // CLI 模式用：跟踪已创建的 CC 会话
 
+function rememberMappedSession(taskApiId, providerSessionId, callbackChannel) {
+  if (!providerSessionId) return;
+  liveSessions.set(providerSessionId, {
+    lastActivity: Date.now(),
+    callbackChannel
+  });
+  if (taskApiId && taskApiId !== providerSessionId) {
+    sessionIdMap.set(taskApiId, providerSessionId);
+  }
+  saveSessions();
+}
+
+function listRecentCodexSessions(days = 30) {
+  const sessionsDir = path.join(process.env.HOME, '.codex', 'sessions');
+  const sessionFiles = [];
+  const now = new Date();
+
+  for (let d = 0; d < days; d++) {
+    const date = new Date(now.getTime() - d * 86400000);
+    const yyyy = String(date.getFullYear());
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const dayDir = path.join(sessionsDir, yyyy, mm, dd);
+
+    try {
+      const files = fs.readdirSync(dayDir)
+        .filter(f => f.endsWith('.jsonl'))
+        .map(f => {
+          const fp = path.join(dayDir, f);
+          const stat = fs.statSync(fp);
+          const uuidMatch = f.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i);
+          const sessionId = uuidMatch ? uuidMatch[1] : f.replace('.jsonl', '');
+          return { sessionId, mtime: stat.mtimeMs };
+        });
+      sessionFiles.push(...files);
+    } catch {
+      // 该天目录不存在，跳过
+    }
+  }
+
+  return sessionFiles;
+}
+
+function resolveCodexSessionId(sessionId) {
+  if (!sessionId) return null;
+
+  const mapped = sessionIdMap.get(sessionId);
+  if (mapped) return mapped;
+
+  const candidates = listRecentCodexSessions()
+    .filter(s => s.sessionId === sessionId || s.sessionId.startsWith(sessionId))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  if (candidates.length > 0) {
+    if (candidates[0].sessionId !== sessionId) {
+      console.log(`[Codex Session] 前缀匹配: ${sessionId} → ${candidates[0].sessionId}`);
+    }
+    return candidates[0].sessionId;
+  }
+
+  return null;
+}
+
 // 短 ID 前缀匹配：/cc-recent 显示 8 位截断 ID，resume 需要完整 UUID
 function resolveSessionPrefix(prefix) {
   if (!prefix) return prefix;
@@ -660,21 +723,21 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, mod
 function executeCodexCLI(prompt, timeout, sessionId, model) {
   return new Promise((resolve) => {
     const startTime = Date.now();
-    console.log(`[Codex CLI] 执行${model ? ' [' + model + ']' : ''}: "${prompt.slice(0, 50)}..."${sessionId ? ' [resume:' + sessionId.slice(0, 8) + ']' : ''}`);
+    const resolvedSessionId = resolveCodexSessionId(sessionId);
+    console.log(`[Codex CLI] 执行${model ? ' [' + model + ']' : ''}: "${prompt.slice(0, 50)}..."${resolvedSessionId ? ' [resume:' + resolvedSessionId.slice(0, 8) + ']' : ''}`);
 
-    const escapedPrompt = prompt.replace(/"/g, '\\"');
-    const modelFlag = model ? ` -m "${model.replace(/"/g, '\\"')}"` : '';
-    const shellCmd = sessionId
-      ? `/opt/homebrew/bin/codex exec resume --skip-git-repo-check --full-auto${modelFlag} "${sessionId}" "${escapedPrompt}"`
-      : `/opt/homebrew/bin/codex exec --skip-git-repo-check --full-auto${modelFlag} "${escapedPrompt}"`;
+    const args = ['exec'];
+    if (resolvedSessionId) {
+      args.push('resume');
+    }
+    args.push('--skip-git-repo-check', '--full-auto');
+    if (model) args.push('-m', model);
+    if (resolvedSessionId) args.push(resolvedSessionId);
+    args.push(prompt);
 
-    const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
+    const child = spawn(CODEX_PATH, args, {
       cwd: process.env.HOME,
-      env: {
-        ...process.env,
-        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
-        HOME: process.env.HOME
-      },
+      env: buildCliEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -718,24 +781,72 @@ function executeCodexCLI(prompt, timeout, sessionId, model) {
 }
 
 // ========== Gemini CLI 执行（支持 session 续接）==========
+const DEFAULT_GEMINI_REPLY_HINT = [
+  'You are replying to an end user inside a chat bot.',
+  'Answer the user request directly, naturally, and helpfully.',
+  'Do not describe yourself as a CLI tool, non-interactive agent, runtime, or execution environment unless the user explicitly asks about that.',
+  'Do not add meta commentary about how you were invoked.',
+  'If the user asks who you are, answer as an AI assistant in this chat and briefly say what you can help with.',
+].join(' ');
+
+function buildGeminiPrompt(prompt) {
+  const hint = process.env.GEMINI_REPLY_HINT;
+  if (hint === 'off') return prompt;
+  const effectiveHint = (hint || DEFAULT_GEMINI_REPLY_HINT).trim();
+  if (!effectiveHint) return prompt;
+  return [
+    'System instructions:',
+    effectiveHint,
+    '',
+    'User message:',
+    prompt,
+    '',
+    'Reply:'
+  ].join('\n');
+}
+
+function sanitizeGeminiResponse(responseText) {
+  const text = (responseText || '').trim();
+  if (!text) return text;
+
+  const exactMetaPatterns = [
+    /^我是一个非交互式命令行代理[。.!！]?$/i,
+    /^我是一个非交互式cli代理[。.!！]?$/i,
+    /^我是一个cli代理[。.!！]?$/i,
+    /^i am a non-interactive command-line agent[.!]?$/i,
+    /^i am a non-interactive cli agent[.!]?$/i,
+    /^i am a cli agent[.!]?$/i,
+  ];
+
+  if (exactMetaPatterns.some((pattern) => pattern.test(text))) {
+    return /[一-龥]/.test(text) ? '我是一个 AI 助手。' : 'I am an AI assistant.';
+  }
+
+  return text
+    .replace(/^我是一个非交互式命令行代理[。.!！]?\s*/i, '我是一个 AI 助手。')
+    .replace(/^我是一个非交互式cli代理[。.!！]?\s*/i, '我是一个 AI 助手。')
+    .replace(/^我是一个cli代理[。.!！]?\s*/i, '我是一个 AI 助手。')
+    .replace(/^I am a non-interactive command-line agent[.!]?\s*/i, 'I am an AI assistant. ')
+    .replace(/^I am a non-interactive CLI agent[.!]?\s*/i, 'I am an AI assistant. ')
+    .replace(/^I am a CLI agent[.!]?\s*/i, 'I am an AI assistant. ')
+    .trim();
+}
+
 function executeGeminiCLI(prompt, timeout, resumeLatest, model) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const modelName = model || 'gemini-2.5-flash';
     console.log(`[Gemini CLI] 执行 [${modelName}]: "${prompt.slice(0, 50)}..."${resumeLatest ? ' [resume:latest]' : ''}`);
+    const wrappedPrompt = buildGeminiPrompt(prompt);
 
-    const escapedPrompt = prompt.replace(/"/g, '\\"');
-    // 用 json 输出以获取 session_id；resumeLatest 时加 --resume latest
-    const resumeFlag = resumeLatest ? ' --resume latest' : '';
-    const modelFlag = ` -m ${modelName}`;
-    const shellCmd = `/opt/homebrew/bin/gemini${resumeFlag}${modelFlag} -p "${escapedPrompt}" -o json --sandbox=false`;
-    const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
+    const args = [];
+    if (resumeLatest) {
+      args.push('--resume', 'latest');
+    }
+    args.push('-m', modelName, '-p', wrappedPrompt, '-o', 'json', '--sandbox=false');
+    const child = spawn(GEMINI_PATH, args, {
       cwd: process.env.HOME,
-      env: {
-        ...process.env,
-        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
-        HOME: process.env.HOME
-      },
+      env: buildCliEnv(),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -765,6 +876,7 @@ function executeGeminiCLI(prompt, timeout, resumeLatest, model) {
         capturedSessionId = json.session_id || null;
         responseText = json.response || responseText;
       } catch {}
+      responseText = sanitizeGeminiResponse(responseText);
       console.log(`[Gemini CLI] 完成，耗时 ${duration}ms，输出 ${responseText.length} 字节${capturedSessionId ? '，session:' + capturedSessionId.slice(0, 8) : ''}`);
       resolve({
         stdout: responseText, stderr: stderr.trim(),
@@ -785,7 +897,18 @@ function executeGeminiCLI(prompt, timeout, resumeLatest, model) {
 
 // ========== CLI 回退执行（原有逻辑） ==========
 const CLAUDE_PATH = '/opt/homebrew/bin/claude';
+const CODEX_PATH = '/opt/homebrew/bin/codex';
+const GEMINI_PATH = '/opt/homebrew/bin/gemini';
 const CC_LOG = '/tmp/cc-live.log';
+
+function buildCliEnv(extra = {}) {
+  return {
+    ...process.env,
+    PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
+    HOME: process.env.HOME,
+    ...extra,
+  };
+}
 
 function executeClaudeCLI(prompt, timeout, sessionId, model) {
   return new Promise((resolve) => {
@@ -793,30 +916,23 @@ function executeClaudeCLI(prompt, timeout, sessionId, model) {
     const useModel = model || 'claude-opus-4-6';
     console.log(`[Claude CLI] 执行 [${useModel}]: "${prompt.slice(0, 50)}..."${sessionId ? ' [会话:' + sessionId.slice(0, 8) + ']' : ''}`);
 
-    // 构建会话参数：已有会话用 --resume，新会话用 --session-id
-    let sessionFlag = '';
+    const args = ['--print', '--model', useModel];
     if (sessionId) {
       if (ccSessions.has(sessionId)) {
-        sessionFlag = ` --resume "${sessionId}"`;
+        args.push('--resume', sessionId);
       } else {
-        sessionFlag = ` --session-id "${sessionId}"`;
+        args.push('--session-id', sessionId);
         ccSessions.add(sessionId);
       }
     }
-
-    const shellCmd = `${CLAUDE_PATH} --print --model ${useModel}${sessionFlag} --dangerously-skip-permissions "${prompt.replace(/"/g, '\\"')}"`;
-    console.log(`[Claude CLI] 命令: ${shellCmd}`);
+    args.push('--dangerously-skip-permissions', prompt);
+    console.log(`[Claude CLI] 命令: ${CLAUDE_PATH} ${args.map(v => JSON.stringify(v)).join(' ')}`);
 
     // 写入实时日志
     try { fs.appendFileSync(CC_LOG, `\n${'='.repeat(60)}\n[${new Date().toISOString()}] CC 开始: ${prompt.slice(0, 80)}...\n${'='.repeat(60)}\n`); } catch (e) {}
-    const child = spawn('/bin/zsh', ['-l', '-c', shellCmd], {
+    const child = spawn(CLAUDE_PATH, args, {
       cwd: process.env.HOME,
-      env: {
-        ...process.env,
-        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:' + process.env.PATH,
-        TERM: 'xterm-256color',
-        HOME: process.env.HOME
-      },
+      env: buildCliEnv({ TERM: 'xterm-256color' }),
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -902,8 +1018,15 @@ function executeClaudeCLI(prompt, timeout, sessionId, model) {
 const CLI_TASK_TYPES = new Set(['claude-cli', 'codex-cli', 'gemini-cli']);
 const CLI_LABELS = { 'claude-cli': 'CC', 'codex-cli': 'Codex', 'gemini-cli': 'Gemini' };
 
+function describeTaskMode(task) {
+  const mode = task.dispatchMode || 'unspecified';
+  const via = task.entrypoint ? ` via:${task.entrypoint}` : '';
+  return `[mode:${mode}${via}]`;
+}
+
 function notifyCompletion(task, result) {
   if (!CLI_TASK_TYPES.has(task.type) || !task.callbackChannel) return;
+  if (task.responseMode && task.responseMode !== 'direct-callback') return;
 
   const label = CLI_LABELS[task.type] || task.type;
   const output = (result.stdout || '').slice(-1800) || '(无输出)';
@@ -921,7 +1044,7 @@ function notifyCompletion(task, result) {
       const backoff = Math.min(attempt * 3000, 15000);
       discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
         if (status >= 200 && status < 300) {
-          console.log(`[回调] ${label} 输出已推送${attempt > 1 ? ` [第${attempt}次]` : ''}`);
+          console.log(`[回调] ${label} 输出已推送 ${describeTaskMode(task)}${attempt > 1 ? ` [第${attempt}次]` : ''}`);
         } else if (attempt < maxRetries) {
           console.error(`[回调] 推送失败 (${status})，${backoff/1000}s 后重试`);
           setTimeout(trySend, backoff);
@@ -965,7 +1088,7 @@ async function executeTask(task) {
     } else if (task.type === 'claude-cli') {
       // 短 ID 前缀解析（/cc-recent 显示 8 位，用户照抄后需要还原完整 UUID）
       if (task.sessionId) task.sessionId = resolveSessionPrefix(task.sessionId);
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId}... - ${task.prompt?.slice(0, 50)}...`);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Claude ${sdkQuery ? 'SDK' : 'CLI'}] ${taskId} ${describeTaskMode(task)} - ${task.prompt?.slice(0, 50)}...`);
       // ack 已由 cc-bridge registerCommand 处理，worker 不再重复推
       // CC 模型 fallback：Opus → Sonnet → 不指定（用 CC 默认）
       const CC_MODELS = ['claude-opus-4-6', 'claude-sonnet-4-6'];
@@ -986,14 +1109,18 @@ async function executeTask(task) {
         }
       }
     } else if (task.type === 'codex-cli') {
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId}...${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Codex CLI] ${taskId} ${describeTaskMode(task)}${task.sessionId ? ' [session:' + task.sessionId.slice(0, 8) + ']' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
       result = await executeCodexCLI(task.prompt, task.timeout, task.sessionId, task.model);
     } else if (task.type === 'gemini-cli') {
-      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId}...${task.resumeLatest ? ' [resume:latest]' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
+      console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [Gemini CLI] ${taskId} ${describeTaskMode(task)}${task.resumeLatest ? ' [resume:latest]' : ''}${task.model ? ' [' + task.model + ']' : ''} - ${task.prompt?.slice(0, 50)}...`);
       result = await executeGeminiCLI(task.prompt, task.timeout, task.resumeLatest, task.model);
     } else {
       console.log(`[${runningTasks.size}/${CONFIG.maxConcurrent}] [命令] ${taskId}... - ${task.command}`);
       result = await executeCommand(task.command, task.timeout);
+    }
+
+    if ((task.type === 'codex-cli' || task.type === 'gemini-cli') && result.metadata?.sessionId) {
+      rememberMappedSession(task.sessionId, result.metadata.sessionId, task.callbackChannel);
     }
 
     // 上报结果
