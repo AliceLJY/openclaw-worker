@@ -1,8 +1,8 @@
-# OpenClaw Worker
+# OpenClaw Docker Runner
 
 [English](README.md) | **简体中文**
 
-这个仓库通过轮询式任务队列，让云端 Bot 更安全地控制本地机器。核心思路本身是可移植的，但这个仓库里已经打磨成熟、长期实战的路径明显是 macOS-first。
+这是一个面向 OpenClaw CLI 编排的 Docker-first 本地 runner / reconciler。核心思路本身可移植，但这个仓库里已经打磨成熟、长期实战的路径仍然明显是 macOS-first。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
@@ -15,7 +15,20 @@
 - Docker
 - 本地 Claude Code with OAuth
 - 运行在 Docker 或云端的 OpenClaw Bot
-- 运行在作者 Mac 上的本地 Worker
+- 运行在作者 Mac 上的本地 runner
+
+## 项目定位
+
+这个仓库不应该再被表述成“一个轮询 worker”。
+
+更准确的产品形态是：
+
+- Docker-first control plane
+- 拥有真实文件和 CLI 权限的本地 runner
+- hook 加速的 callback 回投
+- 负责领任务、恢复和兜底的 reconciler 循环
+
+长轮询仍然保留，但它只是领任务的传输实现，不应该再作为产品主叙事。
 
 ## 兼容性说明
 
@@ -55,25 +68,25 @@
 
 ## 它是干什么的
 
-OpenClaw Worker 在云端编排和本地执行之间加了一层队列边界：
+OpenClaw Docker Runner 在云端编排和本地执行之间加了一层队列边界：
 
 - Client 或 Bot 把任务提交给 `server.js`
-- 本地 Worker 轮询拿任务
-- Worker 执行命令或本地 AI CLI 任务
+- 本地 runner 通过 reconciler 循环领取任务
+- runner 执行命令或本地 AI CLI 任务
 - 结果回传给 Task API
-- 可选回调会把完成消息再推回 Bot 侧
+- 可选回调会通过 hook-first 路径把完成消息再推回 Bot 侧
 
 ```text
-Client / Bot -> Task API -> Local Worker -> Local CLI / Files / Claude Code
+Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
 ```
 
 ## 部署模式
 
 | 模式 | 分别跑在哪里 | 说明 |
 |------|--------------|------|
-| Cloud + Local Worker | `server.js` 跑云端，`worker.js` 跑本地机器 | 主要远控形态 |
-| Docker Local | OpenClaw 和 Task API 在 Docker，Worker 在宿主机 | 最接近作者当前本地实战路径 |
-| Bare Metal API | `server.js` 直接跑在某台主机上，Worker 跑在另一台机器上 | 理论可行，但这里文档较少 |
+| Cloud + Local Runner | `server.js` 跑云端，`worker.js` 跑本地机器 | 主要远控形态 |
+| Docker Local | OpenClaw 和 Task API 在 Docker，runner 在宿主机 | 最接近作者当前本地实战路径 |
+| Bare Metal API | `server.js` 直接跑在某台主机上，runner 跑在另一台机器上 | 理论可行，但这里文档较少 |
 
 文档：
 
@@ -104,15 +117,15 @@ Client / Bot -> Task API -> Local Worker -> Local CLI / Files / Claude Code
 cd openclaw-worker
 npm install
 export WORKER_TOKEN="$(openssl rand -hex 32)"
-node server.js
+npm run task-api
 ```
 
-### 2. 启动本地 Worker
+### 2. 启动本地 runner
 
 ```bash
 export WORKER_URL="http://YOUR_SERVER_IP:3456"
 export WORKER_TOKEN="YOUR_TOKEN"
-node worker.js
+npm run runner
 ```
 
 ### 3. 或使用 Docker 拓扑
@@ -122,7 +135,7 @@ cd docker
 docker compose up -d
 ```
 
-这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。
+这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。Docker 侧是控制平面，本地 runner 仍然是执行平面。
 
 ## 仓库结构
 
@@ -148,11 +161,11 @@ openclaw-worker/
 
 ## 安全模型
 
-- 本地 Worker 不需要暴露入站端口。
-- Worker 通过轮询 Task API 工作，而不是直接把 shell 暴露到公网。
+- 本地 runner 不需要暴露入站端口。
+- reconciler 循环通过 Task API 领取任务，而不是直接把 shell 暴露到公网。
 - 认证方式是基于 token。
 - 任务队列在 Bot 侧编排和本地执行之间提供了一层审计边界。
-- 这套安全性最终仍取决于你给本地 Worker 的权限和你的部署卫生。
+- 这套安全性最终仍取决于你给本地 runner 的权限和你的部署卫生。
 
 ## 作者
 

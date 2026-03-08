@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Docker Runner 命名收口
+
+### Changed
+- **产品口径**：对外定位从“polling worker”收口为 `Docker-first local runner / reconciler`
+- **README**：统一强调 Docker control plane + local execution plane，而不是把轮询当主卖点
+- **脚本命名**：新增 `npm run task-api`、`npm run runner`、`npm run reconciler` 作为产品化别名，同时保留 `server` / `worker` 兼容脚本
+- **运行时命名**：`worker.js` 启动日志和主循环命名改为 reconciler 语义，保留 `/worker/poll` 接口兼容
+
+### Notes
+- 这次主要是命名和叙事收口，不是 breaking API 变更
+- 现有接入方仍可继续使用 `worker.js`、`/worker/poll`、`npm run worker`
+
 ## [2026-02-22] - Session 检测修复
 
 ### Fixed

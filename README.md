@@ -1,8 +1,8 @@
-# OpenClaw Worker
+# OpenClaw Docker Runner
 
 **English** | [简体中文](README_CN.md)
 
-Securely control a local machine from a cloud bot through a polling task queue. The core idea is portable, but the production-tested workflow in this repository is macOS-first.
+Docker-first local runner and reconciler for OpenClaw CLI orchestration. The core idea is portable, but the production-tested workflow in this repository is still macOS-first.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
@@ -15,7 +15,20 @@ Securely control a local machine from a cloud bot through a polling task queue. 
 - Docker
 - Local Claude Code with OAuth
 - OpenClaw bot running in Docker or on a cloud host
-- Local Worker running on the author's Mac
+- Local runner running on the author's Mac
+
+## Project Positioning
+
+This repository should not be described as "just a polling worker".
+
+The intended product shape is:
+
+- Docker-first control plane
+- Local runner with real file and CLI access
+- Hook-accelerated callback delivery
+- Reconciler loop for task pickup, recovery, and audit-safe fallback
+
+Long polling is still used as transport for task pickup, but it is no longer the primary product story.
 
 ## Compatibility Notes
 
@@ -55,25 +68,25 @@ Securely control a local machine from a cloud bot through a polling task queue. 
 
 ## What It Does
 
-OpenClaw Worker adds a queue boundary between cloud orchestration and local execution:
+OpenClaw Docker Runner adds a queue boundary between cloud orchestration and local execution:
 
 - A client or bot submits tasks to `server.js`
-- The local Worker polls for work
-- The Worker executes commands or local AI CLI tasks
+- The local runner pulls work through a reconciler loop
+- The runner executes commands or local AI CLI tasks
 - Results are sent back to the Task API
-- Optional callbacks can push completion messages back to the bot side
+- Optional callbacks can push completion messages back to the bot side with hook-first delivery
 
 ```text
-Client / Bot -> Task API -> Local Worker -> Local CLI / Files / Claude Code
+Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
 ```
 
 ## Deployment Modes
 
 | Mode | What runs where | Notes |
 |------|------------------|-------|
-| Cloud + Local Worker | `server.js` on cloud, `worker.js` on local machine | Main remote-control pattern |
-| Docker Local | OpenClaw and Task API in Docker, Worker on local host | Matches the author's main local setup |
-| Bare Metal API | `server.js` directly on a host, Worker on another machine | Possible, but less documented here |
+| Cloud + Local Runner | `server.js` on cloud, `worker.js` on local machine | Main remote-control pattern |
+| Docker Local | OpenClaw and Task API in Docker, runner on local host | Matches the author's main local setup |
+| Bare Metal API | `server.js` directly on a host, runner on another machine | Possible, but less documented here |
 
 Docs:
 
@@ -104,15 +117,15 @@ These are not theoretical. They are encoded in the current implementation:
 cd openclaw-worker
 npm install
 export WORKER_TOKEN="$(openssl rand -hex 32)"
-node server.js
+npm run task-api
 ```
 
-### 2. Start the local Worker
+### 2. Start the local runner
 
 ```bash
 export WORKER_URL="http://YOUR_SERVER_IP:3456"
 export WORKER_TOKEN="YOUR_TOKEN"
-node worker.js
+npm run runner
 ```
 
 ### 3. Or use the Docker setup
@@ -122,7 +135,7 @@ cd docker
 docker compose up -d
 ```
 
-This Docker topology expects host mounts for local session data and Docker callback access.
+This Docker topology expects host mounts for local session data and Docker callback access. The Docker side is the control plane; the local runner remains the execution plane.
 
 ## Repository Layout
 
@@ -148,11 +161,11 @@ openclaw-worker/
 
 ## Security Model
 
-- No inbound connection to the local Worker is required.
-- The Worker polls the Task API instead of exposing a shell directly to the internet.
+- No inbound connection to the local runner is required.
+- The reconciler loop pulls from the Task API instead of exposing a shell directly to the internet.
 - Authentication is token-based.
 - The queue provides an audit boundary between bot-side orchestration and local execution.
-- The security model is still only as strong as your local Worker permissions and deployment hygiene.
+- The security model is still only as strong as your local runner permissions and deployment hygiene.
 
 ## Author
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Mac 本地 Worker
+ * Mac 本地 Runner / Reconciler
  * Agent SDK 版本：流式输出 + 会话管理
  *
- * 运行: node worker.js
- * 或: WORKER_URL=https://xxx WORKER_TOKEN=xxx node worker.js
+ * 运行: npm run runner
+ * 或: WORKER_URL=https://xxx WORKER_TOKEN=xxx npm run runner
  */
 
 import { exec, spawn, execFile } from 'child_process';
@@ -41,9 +41,9 @@ const CONFIG = {
   serverUrl: process.env.WORKER_URL || 'http://127.0.0.1:3456',
   // 认证 Token（和云端保持一致）
   token: process.env.WORKER_TOKEN || 'change-me-to-a-secure-token',
-  // 轮询间隔（毫秒） - 仅在并发满时使用
+  // 调和循环等待间隔（毫秒） - 仅在并发满时使用
   pollInterval: parseConfigInt(process.env.POLL_INTERVAL, 500, 50, 60000),
-  // 长轮询等待时间（毫秒） - 服务器 hold 住连接的时间
+  // 调和领取窗口（毫秒） - 服务器 hold 住连接的时间
   longPollWait: parseConfigInt(process.env.LONG_POLL_WAIT, 30000, 1000, 300000),
   // 最大并发任务数
   maxConcurrent: parseConfigInt(process.env.MAX_CONCURRENT, 5, 1, 50),
@@ -59,10 +59,10 @@ if (CONFIG.token === 'change-me-to-a-secure-token') {
 }
 
 console.log('========================================');
-console.log('  Mac Worker 启动 (Agent SDK + CLI 双模式)');
+console.log('  Docker-first Local Runner 启动');
 console.log('========================================');
-console.log(`服务器: ${CONFIG.serverUrl}`);
-console.log(`长轮询等待: ${CONFIG.longPollWait}ms`);
+console.log(`Task API: ${CONFIG.serverUrl}`);
+console.log(`调和等待窗口: ${CONFIG.longPollWait}ms`);
 console.log(`最大并发: ${CONFIG.maxConcurrent} 个任务`);
 console.log(`执行模式: ${sdkQuery ? 'Agent SDK (优先)' : 'CLI (回退)'}`);
 console.log('');
@@ -107,7 +107,7 @@ function request(method, urlPath, body = null) {
     });
 
     req.on('error', reject);
-    // 长轮询请求的超时要大于 hold 时间，避免提前断开
+    // 调和领取请求的超时要大于服务器 hold 时间，避免提前断开
     const reqTimeout = urlPath.includes('/worker/poll') ? CONFIG.longPollWait + 5000 : 10000;
     req.setTimeout(reqTimeout, () => {
       req.destroy();
@@ -1153,8 +1153,8 @@ async function executeTask(task) {
   }
 }
 
-// 主轮询循环
-async function pollAndExecute() {
+// 主调和循环：hook 优先，长轮询负责领取任务和兜底恢复
+async function runReconcilerLoop() {
   while (isRunning) {
     try {
       if (runningTasks.size >= CONFIG.maxConcurrent) {
@@ -1223,4 +1223,4 @@ process.on('SIGTERM', () => {
 });
 
 // ========== 启动 ==========
-pollAndExecute().catch(console.error);
+runReconcilerLoop().catch(console.error);

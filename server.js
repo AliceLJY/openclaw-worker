@@ -1,6 +1,6 @@
 /**
  * 本地任务 API 服务
- * 运行在 Docker 中，配合 Worker + CC Bridge 使用
+ * 运行在 Docker control plane 中，配合 local runner / reconciler 使用
  */
 
 import express from 'express';
@@ -226,17 +226,17 @@ app.post('/tasks', auth, (req, res) => {
   });
   console.log(`[Task] Created: ${task.id} - ${normalizedCommand}`);
 
-  res.json({ taskId: task.id, message: 'Task created, waiting for worker' });
+  res.json({ taskId: task.id, message: 'Task created, waiting for reconciler' });
 });
 
-// [云端 OpenClaw 调用] 查询结果（带轮询等待）
+// [云端 OpenClaw 调用] 查询结果（带等待窗口）
 app.get('/tasks/:taskId', auth, async (req, res) => {
   const { taskId } = req.params;
   const waitMs = parseBoundedInt(req.query.wait, 0, { min: 0, max: MAX_POLL_WAIT_MS }); // 最多等待多少毫秒
 
   const startTime = Date.now();
 
-  // 轮询等待结果
+  // 等待窗口内检查结果
   while (Date.now() - startTime < waitMs) {
     const result = consumeTaskResult(taskId);
     if (result) {
@@ -259,7 +259,7 @@ app.get('/tasks/:taskId', auth, async (req, res) => {
   res.json({ status: task.status, message: 'Result not ready yet' });
 });
 
-// [本地 Worker 调用] 获取待执行任务（长轮询）
+// [本地 runner / reconciler 调用] 获取待执行任务（长连接领取）
 app.get('/worker/poll', auth, async (req, res) => {
   const waitMs = parseBoundedInt(req.query.wait, DEFAULT_POLL_WAIT_MS, { min: 1000, max: MAX_POLL_WAIT_MS });
 
@@ -269,7 +269,7 @@ app.get('/worker/poll', auth, async (req, res) => {
     return res.json(initialTask);
   }
 
-  // 长轮询：hold 住连接，每 500ms 检查一次
+  // 长连接等待：hold 住连接，每 500ms 检查一次
   const startTime = Date.now();
   while (Date.now() - startTime < waitMs) {
     await new Promise(r => setTimeout(r, 500));
