@@ -5,6 +5,9 @@
 
 import express from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 
 const app = express();
 
@@ -23,6 +26,7 @@ const MAX_POLL_WAIT_MS = 60000;
 const MIN_TASK_TIMEOUT_MS = 1000;
 const MAX_TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const MAX_EVENTS = 2000;
+const EVENT_DB_PATH = process.env.WORKER_EVENT_DB || '/tmp/openclaw-runner-events.db';
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
 if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
@@ -34,7 +38,7 @@ if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.le
 // ========== 内存任务队列 ==========
 const tasks = new Map();      // taskId -> task
 const results = new Map();    // taskId -> result
-const events = [];
+let eventDb = null;
 
 // ========== 活跃会话跟踪 ==========
 const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
@@ -84,6 +88,33 @@ function extractDispatchMeta(body, defaultEntrypoint) {
   };
 }
 
+function getEventDb() {
+  if (eventDb) return eventDb;
+
+  fs.mkdirSync(path.dirname(EVENT_DB_PATH), { recursive: true });
+  eventDb = new DatabaseSync(EVENT_DB_PATH);
+  eventDb.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      task_id TEXT,
+      task_type TEXT,
+      task_status TEXT,
+      session_id TEXT,
+      origin TEXT,
+      dispatch_mode TEXT,
+      response_mode TEXT,
+      entrypoint TEXT,
+      details_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, created_at DESC);
+  `);
+  return eventDb;
+}
+
 function appendEvent(type, task, extra = {}) {
   const event = {
     id: crypto.randomUUID(),
@@ -100,12 +131,96 @@ function appendEvent(type, task, extra = {}) {
     details: extra.details || null,
   };
 
-  events.push(event);
-  if (events.length > MAX_EVENTS) {
-    events.splice(0, events.length - MAX_EVENTS);
+  const db = getEventDb();
+  db.prepare(`
+    INSERT INTO events (
+      id, type, created_at, task_id, task_type, task_status, session_id,
+      origin, dispatch_mode, response_mode, entrypoint, details_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    event.id,
+    event.type,
+    event.createdAt,
+    event.taskId,
+    event.taskType,
+    event.taskStatus,
+    event.sessionId,
+    event.origin,
+    event.dispatchMode,
+    event.responseMode,
+    event.entrypoint,
+    event.details ? JSON.stringify(event.details) : null
+  );
+
+  const countRow = db.prepare(`SELECT COUNT(*) AS count FROM events`).get();
+  const count = Number(countRow?.count || 0);
+  if (count > MAX_EVENTS) {
+    db.prepare(`
+      DELETE FROM events
+      WHERE id IN (
+        SELECT id FROM events
+        ORDER BY created_at DESC
+        LIMIT -1 OFFSET ?
+      )
+    `).run(MAX_EVENTS);
   }
 
   return event;
+}
+
+function countEvents() {
+  const row = getEventDb().prepare(`SELECT COUNT(*) AS count FROM events`).get();
+  return Number(row?.count || 0);
+}
+
+function listEvents({ limit, taskId, type }) {
+  const conditions = [];
+  const params = [];
+
+  if (taskId) {
+    conditions.push('task_id = ?');
+    params.push(taskId);
+  }
+  if (type) {
+    conditions.push('type = ?');
+    params.push(type);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const rows = getEventDb().prepare(`
+    SELECT
+      id,
+      type,
+      created_at,
+      task_id,
+      task_type,
+      task_status,
+      session_id,
+      origin,
+      dispatch_mode,
+      response_mode,
+      entrypoint,
+      details_json
+    FROM events
+    ${whereClause}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(...params, limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    createdAt: row.created_at,
+    taskId: row.task_id,
+    taskType: row.task_type,
+    taskStatus: row.task_status,
+    sessionId: row.session_id,
+    origin: row.origin,
+    dispatchMode: row.dispatch_mode,
+    responseMode: row.response_mode,
+    entrypoint: row.entrypoint,
+    details: row.details_json ? JSON.parse(row.details_json) : null,
+  }));
 }
 
 function enqueueTask(payload) {
@@ -237,7 +352,7 @@ app.get('/health', (req, res) => {
     tasks: tasks.size,
     results: results.size,
     activeSessions: activeSessions.size,
-    events: events.length,
+    events: countEvents(),
   });
 });
 
@@ -246,12 +361,8 @@ app.get('/events', auth, (req, res) => {
   const taskId = normalizeOptionalString(req.query.taskId);
   const type = normalizeOptionalString(req.query.type);
 
-  let rows = events;
-  if (taskId) rows = rows.filter(event => event.taskId === taskId);
-  if (type) rows = rows.filter(event => event.type === type);
-
   res.json({
-    events: rows.slice(-limit).reverse(),
+    events: listEvents({ limit, taskId, type }),
   });
 });
 

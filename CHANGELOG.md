@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - SQLite Event Store
+
+### Added
+- **SQLite 事件库**：`/events` 现在基于 SQLite 持久化，而不是进程内存
+- **环境变量**：支持用 `WORKER_EVENT_DB` 覆盖默认事件库路径
+
+### Changed
+- **审计面**：Task API 重启后，近期事件仍然可查询
+
 ## [2026-03-08] - Event API and Reconciler Surface
 
 ### Added
@@ -9,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - **事件流**：补充 `task.created`、`task.started`、`task.completed`、`task.failed`、`callback.*` 事件记录
 
 ### Changed
+- **事件存储**：事件日志从内存记录提升为 SQLite 持久化
 - **任务状态**：`/worker/result` 现在会按退出码写入 `completed` / `failed`
 - **产品口径**：README 明确了 event / reconciler 面，不再只有 task queue 叙事
 

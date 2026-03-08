@@ -32,7 +32,7 @@ Long polling is still used as transport for task pickup, but it is no longer the
 
 Recent productized additions:
 
-- in-memory event log with `/events` query API for recent task and callback lifecycle
+- SQLite-backed event log with `/events` query API for recent task and callback lifecycle
 - clearer `task.created / task.started / task.completed / task.failed / callback.*` event trail
 - reconciler naming in scripts and runtime logs, while keeping legacy endpoints for compatibility
 
@@ -187,6 +187,18 @@ Recent lifecycle events are available through the Task API:
 ```bash
 curl -H "Authorization: Bearer $WORKER_TOKEN" \
   "http://localhost:3456/events?limit=50"
+```
+
+Default event database:
+
+```text
+/tmp/openclaw-runner-events.db
+```
+
+Override with:
+
+```bash
+WORKER_EVENT_DB=/path/to/openclaw-runner-events.db
 ```
 
 Useful filters:

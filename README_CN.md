@@ -32,7 +32,7 @@
 
 最近补上的产品化能力：
 
-- 内存事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
+- SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
 - 更清晰的 `task.created / task.started / task.completed / task.failed / callback.*` 事件轨迹
 - 脚本和运行时日志已经改成 reconciler 语义，同时保留旧接口兼容
 
@@ -187,6 +187,18 @@ openclaw-worker/
 ```bash
 curl -H "Authorization: Bearer $WORKER_TOKEN" \
   "http://localhost:3456/events?limit=50"
+```
+
+默认事件数据库：
+
+```text
+/tmp/openclaw-runner-events.db
+```
+
+如需覆盖：
+
+```bash
+WORKER_EVENT_DB=/path/to/openclaw-runner-events.db
 ```
 
 常用过滤参数：
