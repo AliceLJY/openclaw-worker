@@ -28,6 +28,15 @@ const MAX_TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const MAX_EVENTS = parseBoundedInt(process.env.WORKER_MAX_EVENTS, 2000, { min: 100, max: 500000 });
 const EVENT_RETENTION_DAYS = parseBoundedInt(process.env.WORKER_EVENT_RETENTION_DAYS, 14, { min: 1, max: 3650 });
 const EVENT_DB_PATH = process.env.WORKER_EVENT_DB || '/tmp/openclaw-runner-events.db';
+const TASK_DB_PATH = process.env.WORKER_TASK_DB || '/tmp/openclaw-runner-tasks.db';
+const TASK_EXPIRE_MS = parseBoundedInt(process.env.WORKER_TASK_RETENTION_MS, 20 * 60 * 1000, {
+  min: 60 * 1000,
+  max: 7 * 24 * 60 * 60 * 1000,
+});
+const RESULT_EXPIRE_MS = parseBoundedInt(process.env.WORKER_RESULT_RETENTION_MS, 30 * 60 * 1000, {
+  min: 60 * 1000,
+  max: 7 * 24 * 60 * 60 * 1000,
+});
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
 if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
@@ -36,10 +45,9 @@ if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.le
   process.exit(1);
 }
 
-// ========== 内存任务队列 ==========
-const tasks = new Map();      // taskId -> task
-const results = new Map();    // taskId -> result
+// ========== 持久化任务状态 ==========
 let eventDb = null;
+let taskDb = null;
 
 // ========== 活跃会话跟踪 ==========
 const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
@@ -114,6 +122,181 @@ function getEventDb() {
     CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, created_at DESC);
   `);
   return eventDb;
+}
+
+function getTaskDb() {
+  if (taskDb) return taskDb;
+
+  fs.mkdirSync(path.dirname(TASK_DB_PATH), { recursive: true });
+  taskDb = new DatabaseSync(TASK_DB_PATH);
+  taskDb.exec(`
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      session_key TEXT,
+      payload_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      completed_at INTEGER,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS task_results (
+      task_id TEXT PRIMARY KEY,
+      result_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_tasks_status_created_at ON tasks(status, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_tasks_session_key_status ON tasks(session_key, status, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_task_results_created_at ON task_results(created_at ASC);
+  `);
+  return taskDb;
+}
+
+function safeParseJson(raw, fallback) {
+  if (typeof raw !== 'string' || !raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function deriveTaskType(task) {
+  return normalizeOptionalString(task?.type) || 'command';
+}
+
+function deriveSessionKey(task) {
+  if (!task?.sessionId) return null;
+  const type = deriveTaskType(task);
+  if (type !== 'claude-cli' && type !== 'codex-cli' && type !== 'gemini-cli') {
+    return null;
+  }
+  return `${type}:${task.sessionId}`;
+}
+
+function hydrateTaskRow(row) {
+  if (!row) return null;
+  const payload = safeParseJson(row.payload_json, {});
+  return {
+    ...payload,
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    createdAt: row.created_at,
+    startedAt: row.started_at ?? payload.startedAt ?? null,
+    completedAt: row.completed_at ?? payload.completedAt ?? null,
+  };
+}
+
+function saveTask(task) {
+  const db = getTaskDb();
+  const type = deriveTaskType(task);
+  const sessionKey = deriveSessionKey({ ...task, type });
+  const updatedAt = Date.now();
+  db.prepare(`
+    INSERT INTO tasks (
+      id, type, status, session_key, payload_json,
+      created_at, started_at, completed_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      type = excluded.type,
+      status = excluded.status,
+      session_key = excluded.session_key,
+      payload_json = excluded.payload_json,
+      created_at = excluded.created_at,
+      started_at = excluded.started_at,
+      completed_at = excluded.completed_at,
+      updated_at = excluded.updated_at
+  `).run(
+    task.id,
+    type,
+    task.status,
+    sessionKey,
+    JSON.stringify({ ...task, type }),
+    task.createdAt,
+    task.startedAt ?? null,
+    task.completedAt ?? null,
+    updatedAt,
+  );
+  return { ...task, type };
+}
+
+function saveTaskResult(taskId, result) {
+  getTaskDb().prepare(`
+    INSERT INTO task_results (task_id, result_json, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(task_id) DO UPDATE SET
+      result_json = excluded.result_json,
+      created_at = excluded.created_at
+  `).run(taskId, JSON.stringify(result), Date.now());
+}
+
+function getTask(taskId) {
+  const row = getTaskDb().prepare(`
+    SELECT id, type, status, payload_json, created_at, started_at, completed_at
+    FROM tasks
+    WHERE id = ?
+  `).get(taskId);
+  return hydrateTaskRow(row);
+}
+
+function getTaskResult(taskId) {
+  const row = getTaskDb().prepare(`
+    SELECT result_json
+    FROM task_results
+    WHERE task_id = ?
+  `).get(taskId);
+  return row ? safeParseJson(row.result_json, null) : null;
+}
+
+function getQueueStats() {
+  const db = getTaskDb();
+  const taskRows = db.prepare(`
+    SELECT status, COUNT(*) AS count
+    FROM tasks
+    GROUP BY status
+  `).all();
+  const resultRow = db.prepare(`SELECT COUNT(*) AS count FROM task_results`).get();
+  const tasksByStatus = Object.fromEntries(
+    taskRows.map((row) => [row.status, Number(row.count || 0)]),
+  );
+  const totalTasks = Object.values(tasksByStatus).reduce((sum, value) => sum + Number(value || 0), 0);
+
+  return {
+    total: totalTasks,
+    byStatus: tasksByStatus,
+    unconsumedResults: Number(resultRow?.count || 0),
+    path: TASK_DB_PATH,
+  };
+}
+
+function resetStaleRunningTasks() {
+  const db = getTaskDb();
+  const now = Date.now();
+  const staleRows = db.prepare(`
+    SELECT id, payload_json
+    FROM tasks
+    WHERE status = 'running'
+  `).all();
+
+  for (const row of staleRows) {
+    const task = hydrateTaskRow({
+      ...row,
+      type: safeParseJson(row.payload_json, {}).type || 'command',
+      status: 'running',
+      created_at: safeParseJson(row.payload_json, {}).createdAt || now,
+      started_at: safeParseJson(row.payload_json, {}).startedAt || null,
+      completed_at: null,
+    });
+    if (!task) continue;
+    task.status = 'pending';
+    task.startedAt = null;
+    saveTask(task);
+  }
+
+  return staleRows.length;
 }
 
 function appendEvent(type, task, extra = {}) {
@@ -308,29 +491,24 @@ function listEvents({ limit, taskId, type }) {
 }
 
 function enqueueTask(payload) {
-  const task = {
+  const task = saveTask({
     id: crypto.randomUUID(),
     status: 'pending',
     createdAt: Date.now(),
     ...payload
-  };
-  tasks.set(task.id, task);
+  });
   appendEvent('task.created', task);
   return task;
 }
 
 function getSerializedSessionKey(task) {
-  if (!task || !task.sessionId) return null;
-  if (task.type !== 'claude-cli' && task.type !== 'codex-cli' && task.type !== 'gemini-cli') {
-    return null;
-  }
-  return `${task.type}:${task.sessionId}`;
+  return deriveSessionKey(task);
 }
 
 function consumeTaskResult(taskId) {
-  if (!results.has(taskId)) return null;
-  const result = results.get(taskId);
-  const task = tasks.get(taskId);
+  const result = getTaskResult(taskId);
+  if (!result) return null;
+  const task = getTask(taskId);
   appendEvent('task.reconciled', task, {
     taskId,
     taskStatus: task?.status || null,
@@ -340,32 +518,44 @@ function consumeTaskResult(taskId) {
       reconciledBy: 'task-result-fetch',
     },
   });
-  results.delete(taskId);
-  tasks.delete(taskId);
+  const db = getTaskDb();
+  db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(taskId);
+  db.prepare(`DELETE FROM tasks WHERE id = ?`).run(taskId);
   return result;
 }
 
 function claimNextPendingTask() {
-  for (const [taskId, task] of tasks) {
-    if (task.status === 'pending') {
-      const sessionKey = getSerializedSessionKey(task);
-      if (sessionKey) {
-        const hasRunningSibling = Array.from(tasks.values()).some(other =>
-          other.id !== taskId &&
-          other.status === 'running' &&
-          getSerializedSessionKey(other) === sessionKey
-        );
-        if (hasRunningSibling) {
-          continue;
-        }
-      }
-      task.status = 'running';
-      task.startedAt = Date.now();
-      appendEvent('task.started', task);
-      console.log(`[Worker] Picked up: ${taskId}`);
-      return task;
+  const db = getTaskDb();
+  const rows = db.prepare(`
+    SELECT id, type, status, payload_json, created_at, started_at, completed_at
+    FROM tasks
+    WHERE status = 'pending'
+    ORDER BY created_at ASC
+  `).all();
+
+  for (const row of rows) {
+    const task = hydrateTaskRow(row);
+    if (!task) continue;
+
+    const sessionKey = getSerializedSessionKey(task);
+    if (sessionKey) {
+      const runningSibling = db.prepare(`
+        SELECT id
+        FROM tasks
+        WHERE status = 'running' AND session_key = ? AND id != ?
+        LIMIT 1
+      `).get(sessionKey, task.id);
+      if (runningSibling) continue;
     }
+
+    task.status = 'running';
+    task.startedAt = Date.now();
+    saveTask(task);
+    appendEvent('task.started', task);
+    console.log(`[Worker] Picked up: ${task.id}`);
+    return task;
   }
+
   return null;
 }
 
@@ -441,12 +631,19 @@ app.use((err, req, res, next) => {
 
 // 健康检查
 app.get('/health', (req, res) => {
+  const queue = getQueueStats();
   res.json({
     status: 'ok',
-    tasks: tasks.size,
-    results: results.size,
+    tasks: queue.total,
+    results: queue.unconsumedResults,
     activeSessions: activeSessions.size,
     events: countEvents(),
+    taskDb: {
+      path: queue.path,
+      byStatus: queue.byStatus,
+      resultRetentionMs: RESULT_EXPIRE_MS,
+      taskRetentionMs: TASK_EXPIRE_MS,
+    },
     eventDb: {
       path: EVENT_DB_PATH,
       retentionDays: EVENT_RETENTION_DAYS,
@@ -496,6 +693,16 @@ app.post('/tasks', auth, (req, res) => {
   res.json({ taskId: task.id, message: 'Task created, waiting for reconciler' });
 });
 
+app.get('/tasks/stats', auth, (req, res) => {
+  res.json({
+    queue: {
+      ...getQueueStats(),
+      taskRetentionMs: TASK_EXPIRE_MS,
+      resultRetentionMs: RESULT_EXPIRE_MS,
+    },
+  });
+});
+
 // [云端 OpenClaw 调用] 查询结果（带等待窗口）
 app.get('/tasks/:taskId', auth, async (req, res) => {
   const { taskId } = req.params;
@@ -518,7 +725,7 @@ app.get('/tasks/:taskId', auth, async (req, res) => {
     return res.json(result);
   }
 
-  const task = tasks.get(taskId);
+  const task = getTask(taskId);
   if (!task) {
     return res.status(404).json({ error: 'Task not found' });
   }
@@ -566,7 +773,7 @@ app.post('/worker/result', auth, (req, res) => {
     completedAt: Date.now()
   };
 
-  const task = tasks.get(taskId);
+  const task = getTask(taskId);
   const baseMetadata = {
     origin: task?.origin || 'unknown',
     dispatchMode: task?.dispatchMode || 'unspecified',
@@ -582,6 +789,7 @@ app.post('/worker/result', auth, (req, res) => {
   if (task) {
     task.status = result.exitCode === 0 ? 'completed' : 'failed';
     task.completedAt = result.completedAt;
+    saveTask(task);
   }
 
   appendEvent(result.exitCode === 0 ? 'task.completed' : 'task.failed', task, {
@@ -594,7 +802,7 @@ app.post('/worker/result', auth, (req, res) => {
     ...(result.metadata?.sessionId ? { sessionId: result.metadata.sessionId } : {}),
   });
 
-  results.set(taskId, result);
+  saveTaskResult(taskId, result);
   console.log(`[Worker] Result: ${taskId} - exit ${exitCode}`);
   if (metadata?.screenshotPath) {
     console.log(`[Worker] Screenshot: ${metadata.screenshotPath}`);
@@ -618,7 +826,7 @@ app.post('/worker/event', auth, (req, res) => {
     return res.status(400).json({ error: 'type is required' });
   }
 
-  const task = taskId ? tasks.get(taskId) : null;
+  const task = taskId ? getTask(taskId) : null;
   const event = appendEvent(normalizedType, task, {
     taskId: taskId || null,
     taskType: metadata?.taskType || null,
@@ -966,24 +1174,29 @@ app.get('/codex/recent', auth, async (req, res) => {
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
-  const TASK_EXPIRE_MS = 20 * 60 * 1000; // 未完成任务 20 分钟过期（适配 15 分钟超时 + buffer）
-  const RESULT_EXPIRE_MS = 30 * 60 * 1000; // 已完成结果保留 30 分钟
   const SESSION_EXPIRE_MS = 30 * 60 * 1000; // 会话 30 分钟过期
+  const db = getTaskDb();
+  const expiredResults = db.prepare(`
+    SELECT t.id
+    FROM tasks t
+    INNER JOIN task_results r ON r.task_id = t.id
+    WHERE r.created_at < ?
+  `).all(now - RESULT_EXPIRE_MS);
+  for (const row of expiredResults) {
+    db.prepare(`DELETE FROM task_results WHERE task_id = ?`).run(row.id);
+    db.prepare(`DELETE FROM tasks WHERE id = ?`).run(row.id);
+    console.log(`[Cleanup] Result expired (unfetched): ${row.id}`);
+  }
 
-  for (const [taskId, task] of tasks) {
-    const age = now - task.createdAt;
-    if (results.has(taskId)) {
-      // 有结果但未被取走：保留更久
-      if (age > RESULT_EXPIRE_MS) {
-        tasks.delete(taskId);
-        results.delete(taskId);
-        console.log(`[Cleanup] Result expired (unfetched): ${taskId}`);
-      }
-    } else if (age > TASK_EXPIRE_MS) {
-      // 无结果的过期任务（卡住或超时）
-      tasks.delete(taskId);
-      console.log(`[Cleanup] Task expired (no result): ${taskId}`);
-    }
+  const expiredTasks = db.prepare(`
+    SELECT id
+    FROM tasks
+    WHERE id NOT IN (SELECT task_id FROM task_results)
+      AND created_at < ?
+  `).all(now - TASK_EXPIRE_MS);
+  for (const row of expiredTasks) {
+    db.prepare(`DELETE FROM tasks WHERE id = ?`).run(row.id);
+    console.log(`[Cleanup] Task expired (no result): ${row.id}`);
   }
 
   // 清理过期会话
@@ -998,9 +1211,15 @@ setInterval(() => {
 
 // ========== 启动 ==========
 app.listen(PORT, '0.0.0.0', () => {
+  const requeued = resetStaleRunningTasks();
+  const queue = getQueueStats();
   trimEvents();
   console.log(`✅ Task API running on :${PORT}`);
   console.log(`   Token : ${AUTH_TOKEN.slice(0, 4)}${'*'.repeat(AUTH_TOKEN.length - 4)}`);
   console.log(`   Notify: ${process.env.DISCORD_BOT_TOKEN ? '✓ DISCORD_BOT_TOKEN set' : '✗ no DISCORD_BOT_TOKEN'}`);
+  console.log(`   Tasks : ${TASK_DB_PATH} | total=${queue.total} | results=${queue.unconsumedResults}`);
   console.log(`   Events: ${EVENT_DB_PATH} | retention=${EVENT_RETENTION_DAYS}d | max=${MAX_EVENTS}`);
+  if (requeued > 0) {
+    console.log(`   Requeue: reset ${requeued} stale running task(s) to pending`);
+  }
 });

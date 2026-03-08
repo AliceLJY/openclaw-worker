@@ -32,7 +32,9 @@
 
 最近补上的产品化能力：
 
+- SQLite 持久化任务队列和结果存储，Task API 重启后待处理任务不会直接丢失
 - SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
+- `/tasks/stats` 用来查看队列规模和未取走结果数量
 - `/events/stats` 和 `/events/maintenance`，用于 retention、vacuum 和事件面运维
 - 更清晰的 `task.created / task.started / task.completed / task.failed / callback.*` 事件轨迹
 - 当客户端真正取走结果时，会补一条 `task.reconciled`
@@ -74,7 +76,6 @@
 
 ## 已知限制
 
-- `server.js` 使用的是内存任务队列和内存结果存储。
 - Session 假设绑定在作者自己的本地 CLI 存储布局上。
 - 回调路径可能依赖作者当前的 Docker 拓扑和挂载的 Docker socket。
 - 这不是一个开箱即用的企业级分布式队列。
@@ -236,6 +237,35 @@ WORKER_MAX_EVENTS=2000
 - `callback.dispatched`
 - `callback.sent`
 - `callback.failed`
+
+## Task Store
+
+任务队列状态和未取走的结果现在会持久化到 SQLite：
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/tasks/stats"
+```
+
+默认任务数据库：
+
+```text
+/tmp/openclaw-runner-tasks.db
+```
+
+如需覆盖：
+
+```bash
+WORKER_TASK_DB=/path/to/openclaw-runner-tasks.db
+WORKER_TASK_RETENTION_MS=1200000
+WORKER_RESULT_RETENTION_MS=1800000
+```
+
+行为说明：
+
+- Pending 任务和未取走结果会跨 Task API 重启保留
+- 启动时会把陈旧的 `running` 任务重置回 `pending`
+- 结果在被取走后会删除；超出 retention 后也会被清理
 
 ## 作者
 

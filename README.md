@@ -32,7 +32,9 @@ Long polling is still used as transport for task pickup, but it is no longer the
 
 Recent productized additions:
 
+- SQLite-backed task queue and result store so pending work survives Task API restarts
 - SQLite-backed event log with `/events` query API for recent task and callback lifecycle
+- `/tasks/stats` for queue visibility and persisted result counts
 - `/events/stats` and `/events/maintenance` for retention, vacuum, and audit-facing event ops
 - clearer `task.created / task.started / task.completed / task.failed / callback.*` event trail
 - `task.reconciled` when a client actually consumes a finished task result
@@ -74,7 +76,6 @@ Recent productized additions:
 
 ## Known Limits
 
-- `server.js` uses an in-memory task queue and in-memory result store.
 - Session assumptions are tied to the author's local CLI storage layout.
 - Callback behavior may depend on the author's Docker topology and mounted Docker socket.
 - This is not a turnkey enterprise-grade distributed queue.
@@ -236,6 +237,35 @@ Common event types:
 - `callback.dispatched`
 - `callback.sent`
 - `callback.failed`
+
+## Task Store
+
+Task queue state and unfetched results are now persisted in SQLite:
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/tasks/stats"
+```
+
+Default task database:
+
+```text
+/tmp/openclaw-runner-tasks.db
+```
+
+Override with:
+
+```bash
+WORKER_TASK_DB=/path/to/openclaw-runner-tasks.db
+WORKER_TASK_RETENTION_MS=1200000
+WORKER_RESULT_RETENTION_MS=1800000
+```
+
+Behavior notes:
+
+- Pending tasks and unfetched results survive Task API restarts
+- Stale `running` tasks are reset to `pending` on Task API boot
+- Results are removed after they are fetched or when retention cleanup expires them
 
 ## Author
 

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Persistent Task Store
+
+### Added
+- **任务持久化**：`server.js` 现在把 task queue 和未取走结果落到 SQLite，不再只活在内存里
+- **队列统计面**：新增 `/tasks/stats`，可查看任务状态分布和未取走结果数量
+- **任务库配置**：支持 `WORKER_TASK_DB`、`WORKER_TASK_RETENTION_MS`、`WORKER_RESULT_RETENTION_MS`
+
+### Changed
+- **恢复策略**：Task API 启动时会把陈旧的 `running` 任务重置为 `pending`
+- **健康面**：`/health` 现在会返回 task db 路径、状态分布和 retention 配置
+- **README**：文档补齐 task store、持久化结果和 requeue 语义
+
 ## [2026-03-08] - Event Ops and Reconcile Audit
 
 ### Added
