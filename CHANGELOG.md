@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Event API and Reconciler Surface
+
+### Added
+- **Event API**：新增 `/events` 查询接口，用于查看最近任务与 callback 生命周期
+- **事件流**：补充 `task.created`、`task.started`、`task.completed`、`task.failed`、`callback.*` 事件记录
+
+### Changed
+- **任务状态**：`/worker/result` 现在会按退出码写入 `completed` / `failed`
+- **产品口径**：README 明确了 event / reconciler 面，不再只有 task queue 叙事
+
 ## [2026-03-08] - Pipeline 谱系收口
 
 ### Changed

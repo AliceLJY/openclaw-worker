@@ -1024,6 +1024,26 @@ function describeTaskMode(task) {
   return `[mode:${mode}${via}]`;
 }
 
+function reportTaskEvent(task, type, details = {}) {
+  if (!task?.id) return;
+  request('POST', '/worker/event', {
+    taskId: task.id,
+    type,
+    details,
+    metadata: {
+      taskType: task.type,
+      taskStatus: task.status,
+      sessionId: task.sessionId || null,
+      origin: task.origin || 'unknown',
+      dispatchMode: task.dispatchMode || 'unspecified',
+      responseMode: task.responseMode || 'direct-callback',
+      entrypoint: task.entrypoint || null,
+    },
+  }).catch((err) => {
+    console.error(`[事件] ${type} 上报失败: ${err.message}`);
+  });
+}
+
 function notifyCompletion(task, result) {
   if (!CLI_TASK_TYPES.has(task.type) || !task.callbackChannel) return;
   if (task.responseMode && task.responseMode !== 'direct-callback') return;
@@ -1034,6 +1054,11 @@ function notifyCompletion(task, result) {
   if (result.exitCode !== 0) {
     const duration = result.duration ? `${Math.round(result.duration / 1000)}s` : '未知';
     notifyDiscord(task.callbackChannel, task.sessionId, output, `❌ ${label} 失败（${duration}）`, task.callbackBotToken);
+    reportTaskEvent(task, 'callback.dispatched', {
+      channel: task.callbackChannel,
+      outcome: 'failure-message',
+      durationMs: result.duration || null,
+    });
   } else {
     const message = output.length > 2000 ? output.slice(0, 1997) + '...' : output;
     const maxRetries = 5;
@@ -1045,11 +1070,21 @@ function notifyCompletion(task, result) {
       discordPost(task.callbackChannel, message, task.callbackBotToken).then(({ status }) => {
         if (status >= 200 && status < 300) {
           console.log(`[回调] ${label} 输出已推送 ${describeTaskMode(task)}${attempt > 1 ? ` [第${attempt}次]` : ''}`);
+          reportTaskEvent(task, 'callback.sent', {
+            channel: task.callbackChannel,
+            attempts: attempt,
+            status,
+          });
         } else if (attempt < maxRetries) {
           console.error(`[回调] 推送失败 (${status})，${backoff/1000}s 后重试`);
           setTimeout(trySend, backoff);
         } else {
           console.error(`[回调] ${label} ${maxRetries}次推送均失败 (${status})`);
+          reportTaskEvent(task, 'callback.failed', {
+            channel: task.callbackChannel,
+            attempts: attempt,
+            status,
+          });
         }
       }).catch(err => {
         if (attempt < maxRetries) {
@@ -1057,6 +1092,11 @@ function notifyCompletion(task, result) {
           setTimeout(trySend, backoff);
         } else {
           console.error(`[回调] ${label} ${maxRetries}次推送均失败: ${err.message}`);
+          reportTaskEvent(task, 'callback.failed', {
+            channel: task.callbackChannel,
+            attempts: attempt,
+            error: err.message,
+          });
         }
       });
     }

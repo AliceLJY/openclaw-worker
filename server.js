@@ -22,6 +22,7 @@ const DEFAULT_POLL_WAIT_MS = 30000;
 const MAX_POLL_WAIT_MS = 60000;
 const MIN_TASK_TIMEOUT_MS = 1000;
 const MAX_TASK_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+const MAX_EVENTS = 2000;
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
 if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
@@ -33,6 +34,7 @@ if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.le
 // ========== 内存任务队列 ==========
 const tasks = new Map();      // taskId -> task
 const results = new Map();    // taskId -> result
+const events = [];
 
 // ========== 活跃会话跟踪 ==========
 const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
@@ -82,6 +84,30 @@ function extractDispatchMeta(body, defaultEntrypoint) {
   };
 }
 
+function appendEvent(type, task, extra = {}) {
+  const event = {
+    id: crypto.randomUUID(),
+    type,
+    createdAt: Date.now(),
+    taskId: task?.id || extra.taskId || null,
+    taskType: task?.type || extra.taskType || null,
+    taskStatus: task?.status || extra.taskStatus || null,
+    sessionId: task?.sessionId || extra.sessionId || null,
+    origin: task?.origin || extra.origin || 'unknown',
+    dispatchMode: task?.dispatchMode || extra.dispatchMode || 'unspecified',
+    responseMode: task?.responseMode || extra.responseMode || 'direct-callback',
+    entrypoint: task?.entrypoint || extra.entrypoint || null,
+    details: extra.details || null,
+  };
+
+  events.push(event);
+  if (events.length > MAX_EVENTS) {
+    events.splice(0, events.length - MAX_EVENTS);
+  }
+
+  return event;
+}
+
 function enqueueTask(payload) {
   const task = {
     id: crypto.randomUUID(),
@@ -90,6 +116,7 @@ function enqueueTask(payload) {
     ...payload
   };
   tasks.set(task.id, task);
+  appendEvent('task.created', task);
   return task;
 }
 
@@ -124,6 +151,8 @@ function claimNextPendingTask() {
         }
       }
       task.status = 'running';
+      task.startedAt = Date.now();
+      appendEvent('task.started', task);
       console.log(`[Worker] Picked up: ${taskId}`);
       return task;
     }
@@ -207,7 +236,22 @@ app.get('/health', (req, res) => {
     status: 'ok',
     tasks: tasks.size,
     results: results.size,
-    activeSessions: activeSessions.size
+    activeSessions: activeSessions.size,
+    events: events.length,
+  });
+});
+
+app.get('/events', auth, (req, res) => {
+  const limit = parseBoundedInt(req.query.limit, 50, { min: 1, max: 500 });
+  const taskId = normalizeOptionalString(req.query.taskId);
+  const type = normalizeOptionalString(req.query.type);
+
+  let rows = events;
+  if (taskId) rows = rows.filter(event => event.taskId === taskId);
+  if (type) rows = rows.filter(event => event.type === type);
+
+  res.json({
+    events: rows.slice(-limit).reverse(),
   });
 });
 
@@ -313,9 +357,19 @@ app.post('/worker/result', auth, (req, res) => {
     };
   }
   if (task) {
-    task.status = 'completed';
+    task.status = result.exitCode === 0 ? 'completed' : 'failed';
     task.completedAt = result.completedAt;
   }
+
+  appendEvent(result.exitCode === 0 ? 'task.completed' : 'task.failed', task, {
+    taskId,
+    taskStatus: task?.status || (result.exitCode === 0 ? 'completed' : 'failed'),
+    details: {
+      exitCode: result.exitCode,
+      error: result.error,
+    },
+    ...(result.metadata?.sessionId ? { sessionId: result.metadata.sessionId } : {}),
+  });
 
   results.set(taskId, result);
   console.log(`[Worker] Result: ${taskId} - exit ${exitCode}`);
@@ -332,6 +386,29 @@ app.post('/worker/result', auth, (req, res) => {
   }
 
   res.json({ success: true });
+});
+
+app.post('/worker/event', auth, (req, res) => {
+  const { taskId, type, details, metadata } = req.body || {};
+  const normalizedType = normalizeOptionalString(type);
+  if (!normalizedType) {
+    return res.status(400).json({ error: 'type is required' });
+  }
+
+  const task = taskId ? tasks.get(taskId) : null;
+  const event = appendEvent(normalizedType, task, {
+    taskId: taskId || null,
+    taskType: metadata?.taskType || null,
+    taskStatus: metadata?.taskStatus || task?.status || null,
+    sessionId: metadata?.sessionId || task?.sessionId || null,
+    origin: metadata?.origin || task?.origin || 'unknown',
+    dispatchMode: metadata?.dispatchMode || task?.dispatchMode || 'unspecified',
+    responseMode: metadata?.responseMode || task?.responseMode || 'direct-callback',
+    entrypoint: metadata?.entrypoint || task?.entrypoint || null,
+    details: details || null,
+  });
+
+  res.json({ success: true, event });
 });
 
 // ========== 文件写入 API（绕过 shell 转义问题） ==========

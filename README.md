@@ -30,6 +30,12 @@ The intended product shape is:
 
 Long polling is still used as transport for task pickup, but it is no longer the primary product story.
 
+Recent productized additions:
+
+- in-memory event log with `/events` query API for recent task and callback lifecycle
+- clearer `task.created / task.started / task.completed / task.failed / callback.*` event trail
+- reconciler naming in scripts and runtime logs, while keeping legacy endpoints for compatibility
+
 ## Product Lineage
 
 - `openclaw-cli-pipeline` is archived and should be treated as historical protocol design
@@ -81,6 +87,7 @@ OpenClaw Docker Runner adds a queue boundary between cloud orchestration and loc
 - The runner executes commands or local AI CLI tasks
 - Results are sent back to the Task API
 - Optional callbacks can push completion messages back to the bot side with hook-first delivery
+- Recent lifecycle events stay queryable through the Task API for debugging and audit
 
 ```text
 Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
@@ -172,6 +179,30 @@ openclaw-worker/
 - Authentication is token-based.
 - The queue provides an audit boundary between bot-side orchestration and local execution.
 - The security model is still only as strong as your local runner permissions and deployment hygiene.
+
+## Event API
+
+Recent lifecycle events are available through the Task API:
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/events?limit=50"
+```
+
+Useful filters:
+
+- `taskId`
+- `type`
+
+Common event types:
+
+- `task.created`
+- `task.started`
+- `task.completed`
+- `task.failed`
+- `callback.dispatched`
+- `callback.sent`
+- `callback.failed`
 
 ## Author
 

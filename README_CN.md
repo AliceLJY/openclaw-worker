@@ -30,6 +30,12 @@
 
 长轮询仍然保留，但它只是领任务的传输实现，不应该再作为产品主叙事。
 
+最近补上的产品化能力：
+
+- 内存事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
+- 更清晰的 `task.created / task.started / task.completed / task.failed / callback.*` 事件轨迹
+- 脚本和运行时日志已经改成 reconciler 语义，同时保留旧接口兼容
+
 ## 产品谱系
 
 - `openclaw-cli-pipeline` 已归档，应被视为历史阶段的协议设计
@@ -81,6 +87,7 @@ OpenClaw Docker Runner 在云端编排和本地执行之间加了一层队列边
 - runner 执行命令或本地 AI CLI 任务
 - 结果回传给 Task API
 - 可选回调会通过 hook-first 路径把完成消息再推回 Bot 侧
+- 最近事件会保留在 Task API 中，便于调试和审计
 
 ```text
 Client / Bot -> Task API -> Local Runner / Reconciler -> Local CLI / Files / Claude Code
@@ -172,6 +179,30 @@ openclaw-worker/
 - 认证方式是基于 token。
 - 任务队列在 Bot 侧编排和本地执行之间提供了一层审计边界。
 - 这套安全性最终仍取决于你给本地 runner 的权限和你的部署卫生。
+
+## Event API
+
+最近的生命周期事件可以直接通过 Task API 查询：
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/events?limit=50"
+```
+
+常用过滤参数：
+
+- `taskId`
+- `type`
+
+常见事件类型：
+
+- `task.created`
+- `task.started`
+- `task.completed`
+- `task.failed`
+- `callback.dispatched`
+- `callback.sent`
+- `callback.failed`
 
 ## 作者
 
