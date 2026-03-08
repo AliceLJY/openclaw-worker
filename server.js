@@ -37,6 +37,10 @@ const RESULT_EXPIRE_MS = parseBoundedInt(process.env.WORKER_RESULT_RETENTION_MS,
   min: 60 * 1000,
   max: 7 * 24 * 60 * 60 * 1000,
 });
+const SESSION_EXPIRE_MS = parseBoundedInt(process.env.WORKER_SESSION_RETENTION_MS, 30 * 60 * 1000, {
+  min: 60 * 1000,
+  max: 30 * 24 * 60 * 60 * 1000,
+});
 
 // 启动强检（学自 Star-Office-UI security_utils）：弱 token 直接拒绝启动，不 warn 继续跑
 if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.length < 16) {
@@ -48,9 +52,6 @@ if (!AUTH_TOKEN || AUTH_TOKEN === 'change-me-to-a-secure-token' || AUTH_TOKEN.le
 // ========== 持久化任务状态 ==========
 let eventDb = null;
 let taskDb = null;
-
-// ========== 活跃会话跟踪 ==========
-const activeSessions = new Map(); // sessionId -> { lastActivity, taskCount }
 
 // ========== 认证中间件 ==========
 function parseBearerToken(headerValue) {
@@ -146,10 +147,21 @@ function getTaskDb() {
       result_json TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS active_sessions (
+      session_id TEXT PRIMARY KEY,
+      cli_type TEXT NOT NULL,
+      callback_channel TEXT,
+      task_count INTEGER NOT NULL,
+      last_activity INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_tasks_status_created_at ON tasks(status, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_tasks_session_key_status ON tasks(session_key, status, created_at ASC);
     CREATE INDEX IF NOT EXISTS idx_tasks_updated_at ON tasks(updated_at ASC);
     CREATE INDEX IF NOT EXISTS idx_task_results_created_at ON task_results(created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_active_sessions_last_activity ON active_sessions(last_activity DESC);
+    CREATE INDEX IF NOT EXISTS idx_active_sessions_cli_type ON active_sessions(cli_type, last_activity DESC);
   `);
   return taskDb;
 }
@@ -270,6 +282,123 @@ function getQueueStats() {
     unconsumedResults: Number(resultRow?.count || 0),
     path: TASK_DB_PATH,
   };
+}
+
+function getSessionCliType(taskType) {
+  if (taskType === 'claude-cli') return 'claude';
+  if (taskType === 'codex-cli') return 'codex';
+  if (taskType === 'gemini-cli') return 'gemini';
+  return 'unknown';
+}
+
+function touchSession(sessionId, {
+  cliType = 'unknown',
+  callbackChannel = null,
+  incrementTaskCount = false,
+  timestamp = Date.now(),
+} = {}) {
+  const normalizedSessionId = normalizeOptionalString(sessionId);
+  if (!normalizedSessionId) return null;
+
+  const db = getTaskDb();
+  const existing = db.prepare(`
+    SELECT task_count, callback_channel, created_at
+    FROM active_sessions
+    WHERE session_id = ?
+  `).get(normalizedSessionId);
+  const nextTaskCount = Number(existing?.task_count || 0) + (incrementTaskCount ? 1 : 0);
+  const nextCallbackChannel = normalizeOptionalString(callbackChannel) || existing?.callback_channel || null;
+  const createdAt = existing?.created_at || timestamp;
+
+  db.prepare(`
+    INSERT INTO active_sessions (
+      session_id, cli_type, callback_channel, task_count,
+      last_activity, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      cli_type = excluded.cli_type,
+      callback_channel = COALESCE(excluded.callback_channel, active_sessions.callback_channel),
+      task_count = excluded.task_count,
+      last_activity = excluded.last_activity,
+      updated_at = excluded.updated_at
+  `).run(
+    normalizedSessionId,
+    cliType,
+    nextCallbackChannel,
+    nextTaskCount,
+    timestamp,
+    createdAt,
+    timestamp,
+  );
+
+  return {
+    sessionId: normalizedSessionId,
+    cliType,
+    callbackChannel: nextCallbackChannel,
+    taskCount: nextTaskCount,
+    lastActivity: timestamp,
+    createdAt,
+  };
+}
+
+function listActiveSessions({ limit = 50, cliType = null } = {}) {
+  const params = [];
+  const where = [];
+  if (cliType) {
+    where.push('cli_type = ?');
+    params.push(cliType);
+  }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const rows = getTaskDb().prepare(`
+    SELECT session_id, cli_type, callback_channel, task_count, last_activity, created_at
+    FROM active_sessions
+    ${whereClause}
+    ORDER BY last_activity DESC
+    LIMIT ?
+  `).all(...params, limit);
+
+  return rows.map((row) => ({
+    sessionId: row.session_id,
+    cliType: row.cli_type,
+    callbackChannel: row.callback_channel,
+    taskCount: Number(row.task_count || 0),
+    lastActivity: Number(row.last_activity || 0),
+    createdAt: Number(row.created_at || 0),
+  }));
+}
+
+function getSessionStats() {
+  const db = getTaskDb();
+  const totalRow = db.prepare(`
+    SELECT COUNT(*) AS count, MIN(last_activity) AS oldest_last_activity, MAX(last_activity) AS newest_last_activity
+    FROM active_sessions
+  `).get();
+  const byTypeRows = db.prepare(`
+    SELECT cli_type, COUNT(*) AS count
+    FROM active_sessions
+    GROUP BY cli_type
+    ORDER BY count DESC, cli_type ASC
+  `).all();
+  return {
+    path: TASK_DB_PATH,
+    active: Number(totalRow?.count || 0),
+    oldestLastActivity: totalRow?.oldest_last_activity ?? null,
+    newestLastActivity: totalRow?.newest_last_activity ?? null,
+    retentionMs: SESSION_EXPIRE_MS,
+    byType: byTypeRows.map((row) => ({
+      cliType: row.cli_type,
+      count: Number(row.count || 0),
+    })),
+  };
+}
+
+function cleanupExpiredSessions() {
+  const cutoff = Date.now() - SESSION_EXPIRE_MS;
+  const deleted = getTaskDb().prepare(`
+    DELETE FROM active_sessions
+    WHERE last_activity < ?
+  `).run(cutoff).changes;
+  return deleted;
 }
 
 function resetStaleRunningTasks() {
@@ -632,17 +761,23 @@ app.use((err, req, res, next) => {
 // 健康检查
 app.get('/health', (req, res) => {
   const queue = getQueueStats();
+  const sessions = getSessionStats();
   res.json({
     status: 'ok',
     tasks: queue.total,
     results: queue.unconsumedResults,
-    activeSessions: activeSessions.size,
+    activeSessions: sessions.active,
     events: countEvents(),
     taskDb: {
       path: queue.path,
       byStatus: queue.byStatus,
       resultRetentionMs: RESULT_EXPIRE_MS,
       taskRetentionMs: TASK_EXPIRE_MS,
+    },
+    sessionDb: {
+      path: sessions.path,
+      retentionMs: sessions.retentionMs,
+      byType: sessions.byType,
     },
     eventDb: {
       path: EVENT_DB_PATH,
@@ -700,6 +835,20 @@ app.get('/tasks/stats', auth, (req, res) => {
       taskRetentionMs: TASK_EXPIRE_MS,
       resultRetentionMs: RESULT_EXPIRE_MS,
     },
+  });
+});
+
+app.get('/sessions/stats', auth, (req, res) => {
+  res.json({
+    sessions: getSessionStats(),
+  });
+});
+
+app.get('/sessions/state', auth, (req, res) => {
+  const limit = parseBoundedInt(req.query.limit, 50, { min: 1, max: 500 });
+  const cliType = normalizeOptionalString(req.query.cliType);
+  res.json({
+    sessions: listActiveSessions({ limit, cliType }),
   });
 });
 
@@ -810,9 +959,11 @@ app.post('/worker/result', auth, (req, res) => {
 
   // 更新会话跟踪
   if (metadata?.sessionId) {
-    activeSessions.set(metadata.sessionId, {
-      lastActivity: Date.now(),
-      taskCount: (activeSessions.get(metadata.sessionId)?.taskCount || 0) + 1
+    touchSession(metadata.sessionId, {
+      cliType: getSessionCliType(task?.type),
+      callbackChannel: task?.callbackChannel || null,
+      incrementTaskCount: false,
+      timestamp: Date.now(),
     });
   }
 
@@ -932,9 +1083,11 @@ app.post('/claude', auth, (req, res) => {
   });
 
   // 更新会话跟踪
-  activeSessions.set(effectiveSessionId, {
-    lastActivity: Date.now(),
-    taskCount: (activeSessions.get(effectiveSessionId)?.taskCount || 0)
+  touchSession(effectiveSessionId, {
+    cliType: 'claude',
+    callbackChannel: task.callbackChannel,
+    incrementTaskCount: true,
+    timestamp: Date.now(),
   });
 
   const isResume = Boolean(requestedSessionId);
@@ -967,6 +1120,12 @@ app.post('/codex', auth, (req, res) => {
     callbackBotToken: normalizeOptionalString(callbackBotToken),
     ...dispatchMeta,
   });
+  touchSession(effectiveSessionId, {
+    cliType: 'codex',
+    callbackChannel: task.callbackChannel,
+    incrementTaskCount: true,
+    timestamp: Date.now(),
+  });
 
   const isResume = Boolean(normalizedSessionId);
   console.log(`[Codex] Task: ${task.id} [mode:${task.dispatchMode}] [session:${effectiveSessionId.slice(0, 8)}${isResume ? ',resume' : ',new'}]${task.model ? ' [' + task.model + ']' : ''}${task.callbackChannel ? ' [callback:' + task.callbackChannel + ']' : ''}${task.entrypoint ? ' [via:' + task.entrypoint + ']' : ''} - ${previewText(promptText)}`);
@@ -996,6 +1155,12 @@ app.post('/gemini', auth, (req, res) => {
     callbackChannel: normalizeOptionalString(callbackChannel),
     callbackBotToken: normalizeOptionalString(callbackBotToken),
     ...dispatchMeta,
+  });
+  touchSession(effectiveSessionId, {
+    cliType: 'gemini',
+    callbackChannel: task.callbackChannel,
+    incrementTaskCount: true,
+    timestamp: Date.now(),
   });
 
   const isResume = task.resumeLatest;
@@ -1041,10 +1206,11 @@ app.post('/notify', auth, async (req, res) => {
 
 // [云端 OpenClaw 调用] 列出活跃会话
 app.get('/claude/sessions', auth, (req, res) => {
-  const sessions = Array.from(activeSessions.entries()).map(([sessionId, s]) => ({
-    sessionId,
-    lastActivity: s.lastActivity,
-    taskCount: s.taskCount || 0
+  const sessions = listActiveSessions({ limit: 200, cliType: 'claude' }).map((session) => ({
+    sessionId: session.sessionId,
+    lastActivity: session.lastActivity,
+    taskCount: session.taskCount,
+    callbackChannel: session.callbackChannel,
   }));
   res.json({ sessions });
 });
@@ -1174,7 +1340,6 @@ app.get('/codex/recent', auth, async (req, res) => {
 // ========== 清理过期任务 ==========
 setInterval(() => {
   const now = Date.now();
-  const SESSION_EXPIRE_MS = 30 * 60 * 1000; // 会话 30 分钟过期
   const db = getTaskDb();
   const expiredResults = db.prepare(`
     SELECT t.id
@@ -1199,13 +1364,7 @@ setInterval(() => {
     console.log(`[Cleanup] Task expired (no result): ${row.id}`);
   }
 
-  // 清理过期会话
-  for (const [sessionId, session] of activeSessions) {
-    if (now - session.lastActivity > SESSION_EXPIRE_MS) {
-      activeSessions.delete(sessionId);
-    }
-  }
-
+  cleanupExpiredSessions();
   trimEvents();
 }, 60000);
 

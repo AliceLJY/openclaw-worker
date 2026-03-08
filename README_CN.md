@@ -33,8 +33,10 @@
 最近补上的产品化能力：
 
 - SQLite 持久化任务队列和结果存储，Task API 重启后待处理任务不会直接丢失
+- SQLite 持久化活跃会话状态，并提供只读 session stats / state 接口
 - SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
 - `/tasks/stats` 用来查看队列规模和未取走结果数量
+- `/sessions/stats` 和 `/sessions/state` 用来查看活跃 CLI 会话状态
 - `/events/stats` 和 `/events/maintenance`，用于 retention、vacuum 和事件面运维
 - 更清晰的 `task.created / task.started / task.completed / task.failed / callback.*` 事件轨迹
 - 当客户端真正取走结果时，会补一条 `task.reconciled`
@@ -266,6 +268,30 @@ WORKER_RESULT_RETENTION_MS=1800000
 - Pending 任务和未取走结果会跨 Task API 重启保留
 - 启动时会把陈旧的 `running` 任务重置回 `pending`
 - 结果在被取走后会删除；超出 retention 后也会被清理
+
+## Session Store
+
+活跃 CLI 会话状态现在也会持久化到同一个 SQLite 任务库里：
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/sessions/stats"
+
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/sessions/state?limit=50"
+```
+
+如需覆盖 session retention：
+
+```bash
+WORKER_SESSION_RETENTION_MS=1800000
+```
+
+行为说明：
+
+- 活跃 session 状态会跨 Task API 重启保留
+- `/claude/sessions` 现在也改成读持久化 session store
+- 过期 session 会在后台清理中自动 trim
 
 ## 作者
 

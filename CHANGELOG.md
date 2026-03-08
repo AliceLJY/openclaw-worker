@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-08] - Persistent Session Store
+
+### Added
+- **会话持久化**：活跃 CLI session 状态现在写入 SQLite，不再只活在进程内
+- **会话观测面**：新增 `/sessions/stats` 和 `/sessions/state` 只读接口
+- **会话保留策略**：支持 `WORKER_SESSION_RETENTION_MS`
+
+### Changed
+- **兼容接口**：`/claude/sessions` 现在改为读取持久化 session store
+- **健康面**：`/health` 现在会返回 session store 的分布和 retention 信息
+- **README**：文档补齐 session store 和只读状态面的产品口径
+
 ## [2026-03-08] - Persistent Task Store
 
 ### Added

@@ -33,8 +33,10 @@ Long polling is still used as transport for task pickup, but it is no longer the
 Recent productized additions:
 
 - SQLite-backed task queue and result store so pending work survives Task API restarts
+- SQLite-backed active session store with read-only session stats and state APIs
 - SQLite-backed event log with `/events` query API for recent task and callback lifecycle
 - `/tasks/stats` for queue visibility and persisted result counts
+- `/sessions/stats` and `/sessions/state` for active CLI session visibility
 - `/events/stats` and `/events/maintenance` for retention, vacuum, and audit-facing event ops
 - clearer `task.created / task.started / task.completed / task.failed / callback.*` event trail
 - `task.reconciled` when a client actually consumes a finished task result
@@ -266,6 +268,30 @@ Behavior notes:
 - Pending tasks and unfetched results survive Task API restarts
 - Stale `running` tasks are reset to `pending` on Task API boot
 - Results are removed after they are fetched or when retention cleanup expires them
+
+## Session Store
+
+Active CLI sessions are now persisted in the same SQLite task database:
+
+```bash
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/sessions/stats"
+
+curl -H "Authorization: Bearer $WORKER_TOKEN" \
+  "http://localhost:3456/sessions/state?limit=50"
+```
+
+Override session retention with:
+
+```bash
+WORKER_SESSION_RETENTION_MS=1800000
+```
+
+Behavior notes:
+
+- Active session state survives Task API restarts
+- `/claude/sessions` now reads from the persisted session store
+- Expired sessions are trimmed by retention cleanup
 
 ## Author
 
