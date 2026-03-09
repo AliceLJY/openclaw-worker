@@ -55,7 +55,6 @@ const CONFIG = {
   callbackApiBaseUrl: process.env.CALLBACK_API_BASE_URL || 'https://discord.com/api/v10',
   // runner 本地 provider session cache，仅供本机 resume / 映射恢复使用
   runnerSessionCacheFile: process.env.RUNNER_SESSION_CACHE_FILE || '/tmp/openclaw-runner-session-cache.json',
-  runnerSessionRetentionMs: parseConfigInt(process.env.RUNNER_SESSION_RETENTION_MS, 30 * 60 * 1000, 60 * 1000, 30 * 24 * 60 * 60 * 1000),
 };
 
 if (CONFIG.token === 'change-me-to-a-secure-token') {
