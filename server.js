@@ -29,6 +29,7 @@ const MAX_EVENTS = parseBoundedInt(process.env.WORKER_MAX_EVENTS, 2000, { min: 1
 const EVENT_RETENTION_DAYS = parseBoundedInt(process.env.WORKER_EVENT_RETENTION_DAYS, 14, { min: 1, max: 3650 });
 const EVENT_DB_PATH = process.env.WORKER_EVENT_DB || '/tmp/openclaw-runner-events.db';
 const TASK_DB_PATH = process.env.WORKER_TASK_DB || '/tmp/openclaw-runner-tasks.db';
+const CALLBACK_API_BASE_URL = process.env.CALLBACK_API_BASE_URL || process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10';
 const TASK_EXPIRE_MS = parseBoundedInt(process.env.WORKER_TASK_RETENTION_MS, 20 * 60 * 1000, {
   min: 60 * 1000,
   max: 7 * 24 * 60 * 60 * 1000,
@@ -1169,24 +1170,26 @@ app.post('/gemini', auth, (req, res) => {
   res.json({ taskId: task.id, sessionId: effectiveSessionId, message: 'Gemini CLI task created' });
 });
 
-// ========== Discord 消息推送 ==========
+// ========== Bot callback push (current compatibility path defaults to Discord API) ==========
 
-// 让 cc-bridge hook 推消息到 Discord（hook 自己在容器里无法直推）
+// 让 bridge / hook 通过 task-api 代发 bot callback（当前默认兼容 Discord channel message API）
 app.post('/notify', auth, async (req, res) => {
   const channel = normalizeString(req.body?.channel);
   const message = typeof req.body?.message === 'string' ? req.body.message : '';
   if (!channel || !message.trim()) {
     return res.status(400).json({ error: 'channel and message are required' });
   }
-  const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
-  if (!DISCORD_BOT_TOKEN) {
-    return res.status(500).json({ error: 'DISCORD_BOT_TOKEN not set' });
+  const callbackBotToken = process.env.CALLBACK_BOT_TOKEN;
+  if (!callbackBotToken) {
+    return res.status(500).json({ error: 'CALLBACK_BOT_TOKEN not set' });
   }
   try {
-    const resp = await fetch(`https://discord.com/api/v10/channels/${channel}/messages`, {
+    const callbackApiBase = CALLBACK_API_BASE_URL.endsWith('/') ? CALLBACK_API_BASE_URL : `${CALLBACK_API_BASE_URL}/`;
+    const callbackUrl = new URL(`channels/${channel}/messages`, callbackApiBase).toString();
+    const resp = await fetch(callbackUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bot ${DISCORD_BOT_TOKEN}`,
+        'Authorization': `Bot ${callbackBotToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ content: message.slice(0, 2000) }),
@@ -1195,7 +1198,7 @@ app.post('/notify', auth, async (req, res) => {
       res.json({ ok: true });
     } else {
       const text = await resp.text();
-      res.status(502).json({ error: `Discord ${resp.status}: ${text}` });
+      res.status(502).json({ error: `Callback API ${resp.status}: ${text}` });
     }
   } catch (err) {
     res.status(502).json({ error: errorMessage(err) });
@@ -1375,7 +1378,7 @@ app.listen(PORT, '0.0.0.0', () => {
   trimEvents();
   console.log(`✅ Task API running on :${PORT}`);
   console.log(`   Token : ${AUTH_TOKEN.slice(0, 4)}${'*'.repeat(AUTH_TOKEN.length - 4)}`);
-  console.log(`   Notify: ${process.env.DISCORD_BOT_TOKEN ? '✓ DISCORD_BOT_TOKEN set' : '✗ no DISCORD_BOT_TOKEN'}`);
+  console.log(`   Notify: ${process.env.CALLBACK_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN ? '✓ CALLBACK_BOT_TOKEN/DISCORD_BOT_TOKEN set' : '✗ no CALLBACK_BOT_TOKEN or DISCORD_BOT_TOKEN'}`);
   console.log(`   Tasks : ${TASK_DB_PATH} | total=${queue.total} | results=${queue.unconsumedResults}`);
   console.log(`   Events: ${EVENT_DB_PATH} | retention=${EVENT_RETENTION_DAYS}d | max=${MAX_EVENTS}`);
   if (requeued > 0) {

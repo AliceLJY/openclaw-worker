@@ -52,6 +52,7 @@ const CONFIG = {
   // OpenClaw Hooks 回调配置（CC 完成后通知 bot）
   openclawHooksUrl: process.env.OPENCLAW_HOOKS_URL || 'http://127.0.0.1:18791',
   openclawHooksToken: process.env.OPENCLAW_HOOKS_TOKEN || 'cc-callback-2026',
+  callbackApiBaseUrl: process.env.CALLBACK_API_BASE_URL || 'https://discord.com/api/v10',
   // runner 本地 provider session cache，仅供本机 resume / 映射恢复使用
   runnerSessionCacheFile: process.env.RUNNER_SESSION_CACHE_FILE || '/tmp/openclaw-runner-session-cache.json',
   runnerSessionRetentionMs: parseConfigInt(process.env.RUNNER_SESSION_RETENTION_MS, 30 * 60 * 1000, 60 * 1000, 30 * 24 * 60 * 60 * 1000),
@@ -439,23 +440,29 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-// ========== Discord 推送（通过代理，绕过 AntiBot LLM） ==========
-const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+// ========== Bot callback push (current compatibility path defaults to Discord API) ==========
+const CALLBACK_BOT_TOKEN = process.env.CALLBACK_BOT_TOKEN || '';
 const DISCORD_PROXY = process.env.DISCORD_PROXY || 'http://127.0.0.1:7897';
 
 /**
- * 通过代理发送 Discord 消息（https-proxy-agent，比手写 CONNECT 隧道稳定）
- * 本机直连 discord.com 被墙，必须走代理
+ * 通过可注入的 bot callback API 发送消息。
+ * 当前默认仍是 Discord channel message API；https 场景可选走代理。
  */
 function discordPost(channelId, content, botToken) {
-  const token = botToken || DISCORD_BOT_TOKEN;
-  const agent = new HttpsProxyAgent(DISCORD_PROXY);
+  const token = botToken || CALLBACK_BOT_TOKEN;
+  const discordApiBase = CONFIG.callbackApiBaseUrl.endsWith('/') ? CONFIG.callbackApiBaseUrl : `${CONFIG.callbackApiBaseUrl}/`;
+  const discordUrl = new URL(`channels/${channelId}/messages`, discordApiBase);
+  const isHttps = discordUrl.protocol === 'https:';
+  const lib = isHttps ? https : http;
+  const agent = isHttps && DISCORD_PROXY ? new HttpsProxyAgent(DISCORD_PROXY) : undefined;
   const body = JSON.stringify({ content: content.slice(0, 2000) });
 
   return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'discord.com',
-      path: `/api/v10/channels/${channelId}/messages`,
+    const req = lib.request({
+      protocol: discordUrl.protocol,
+      hostname: discordUrl.hostname,
+      port: discordUrl.port || (isHttps ? 443 : 80),
+      path: discordUrl.pathname + discordUrl.search,
       method: 'POST',
       headers: {
         'Authorization': `Bot ${token}`,
@@ -472,7 +479,7 @@ function discordPost(channelId, content, botToken) {
     req.on('error', reject);
     req.setTimeout(15000, () => {
       req.destroy();
-      reject(new Error('Discord request timeout'));
+      reject(new Error('Callback request timeout'));
     });
     req.write(body);
     req.end();
@@ -620,7 +627,7 @@ async function executeClaudeSDK(prompt, timeout, sessionId, callbackChannel, mod
   let capturedSessionId = sessionId || null;
 
   function flush() {
-    // 不推流式进度到 Discord，保持干净的聊天体验
+    // 不推流式进度到 bot chat，保持干净的聊天体验
     buffer = [];
     debounceTimer = null;
   }
@@ -1018,7 +1025,7 @@ function executeClaudeCLI(prompt, timeout, sessionId, model) {
   });
 }
 
-// ========== 完成通知（最终结果推 Discord） ==========
+// ========== 完成通知（最终结果推回 bot 侧 callback channel） ==========
 const CLI_TASK_TYPES = new Set(['claude-cli', 'codex-cli', 'gemini-cli']);
 const CLI_LABELS = { 'claude-cli': 'CC', 'codex-cli': 'Codex', 'gemini-cli': 'Gemini' };
 
@@ -1173,7 +1180,7 @@ async function executeTask(task) {
       ...result
     });
 
-    // CC 任务完成后回调通知 Discord
+    // CC 任务完成后回调通知 bot 侧 channel
     notifyCompletion(task, result);
 
     const status = result.exitCode === 0 ? '✓' : '✗';

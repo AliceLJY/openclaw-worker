@@ -382,9 +382,9 @@ The simplest solution (polling) ended up being the most reliable. Persistent con
 
 One token, passed in HTTP header. That's it. No device pairing, no dual tokens, no confusion.
 
-### 3. Stateless is Robust
+### 3. Stateless HTTP, Stateful Sessions
 
-No session state means no session expiration, no reconnection logic, no "connection lost" errors. Each request is independent.
+The HTTP layer is stateless (polling, no persistent connections) — that's the robust part. Session state is tracked separately in SQLite (`active_sessions` table) so the server knows which SDK session to resume. The worker also keeps a local JSON recovery cache (`/tmp/openclaw-runner-session-cache.json`) to restore session mappings after a worker restart — this is a recovery aid, not an authoritative source. The SQLite database on the server side is the single source of truth.
 
 ### 4. Documentation Gaps are Normal
 
@@ -400,9 +400,9 @@ The initial assumption was "to control local computer, install software locally.
 
 WebSockets require persistent connections. Behind corporate firewalls, NATs, and mobile networks, these connections break frequently. HTTP polling works everywhere.
 
-### Why In-Memory Queue?
+### Why SQLite for Task Storage?
 
-For personal use, in-memory task queue is fine. If the server restarts, pending tasks are lost, but they're short-lived anyway (max 5 minutes). For production, could add Redis or database persistence.
+Tasks and session state are persisted in SQLite (`/tmp/openclaw-runner-tasks.db`). This allows the server to survive restarts without losing pending tasks or session records. The queue logic is still simple — SQLite replaces the original in-memory queue with minimal added complexity, no external dependencies, and full crash recovery. The worker's local JSON session cache (`/tmp/openclaw-runner-session-cache.json`) is a lightweight complement: it only stores SDK session IDs for resume purposes and is not authoritative.
 
 ### Why 500ms Polling Interval?
 
