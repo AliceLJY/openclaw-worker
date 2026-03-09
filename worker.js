@@ -282,6 +282,8 @@ function editFileOnDisk(filePath, oldString, newString, replaceAll) {
 }
 
 // ========== Runner 本地 provider session cache ==========
+// 职责单一：只用于 runner 重启后恢复 SDK session resume。
+// 权威状态在 server.js 的 taskDb/sessionDb（SQLite），这里不是第二个状态主人。
 const SESSION_FILE = CONFIG.runnerSessionCacheFile;
 const liveSessions = new Map();   // sdkSessionId → { lastActivity, callbackChannel }
 const sessionIdMap = new Map();   // taskApiSessionId → sdkSessionId（映射表）
@@ -418,27 +420,8 @@ function saveSessions() {
 
 loadSessions();
 
-// 每 5 分钟清理超过保留时间的不活跃 provider session cache
-setInterval(() => {
-  const now = Date.now();
-  let cleaned = 0;
-  for (const [id] of liveSessions) {
-    const session = liveSessions.get(id);
-    if (now - session.lastActivity > CONFIG.runnerSessionRetentionMs) {
-      liveSessions.delete(id);
-      ccSessions.delete(id);
-      // 清理映射表中指向该 SDK session 的条目
-      for (const [apiId, sdkId] of sessionIdMap) {
-        if (sdkId === id) sessionIdMap.delete(apiId);
-      }
-      cleaned++;
-    }
-  }
-  if (cleaned > 0) {
-    console.log(`[会话] 清理了 ${cleaned} 个过期会话，剩余 ${liveSessions.size} 个`);
-    saveSessions();
-  }
-}, 5 * 60 * 1000);
+// 注：runner 本地 cache 的过期清理由 server 侧 cleanupExpiredSessions() 统一管理。
+// runner 这里不再另起定时器，避免双重清理职责混淆。
 
 // ========== Bot callback push (current compatibility path defaults to Discord API) ==========
 const CALLBACK_BOT_TOKEN = process.env.CALLBACK_BOT_TOKEN || '';
