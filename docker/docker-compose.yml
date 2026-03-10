@@ -49,7 +49,9 @@ services:
       - ~/.codex/sessions:/host-codex-sessions:ro  # Codex session files for /codex/recent
     environment:
       - WORKER_TOKEN=${WORKER_TOKEN}
+      - CALLBACK_BOT_TOKEN=${CALLBACK_BOT_TOKEN}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - CALLBACK_API_BASE_URL=${CALLBACK_API_BASE_URL}
       - PORT=3456
       - WORKER_TASK_DB=${WORKER_TASK_DB:-/tmp/openclaw-runner-tasks.db}
       - WORKER_EVENT_DB=${WORKER_EVENT_DB:-/tmp/openclaw-runner-events.db}

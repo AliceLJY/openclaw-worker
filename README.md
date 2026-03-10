@@ -25,7 +25,7 @@ The intended product shape is:
 
 - Docker-first control plane
 - Host-side runner with real file and CLI access
-- Hook-accelerated callback delivery
+- Hook-accelerated bot callback delivery
 - Reconciler loop for task pickup, recovery, and audit-safe fallback
 
 Practical deployment story:
@@ -40,7 +40,7 @@ Recent productized additions:
 
 - SQLite-backed task queue and result store so pending work survives Task API restarts
 - SQLite-backed active session store with read-only session stats and state APIs
-- SQLite-backed event log with `/events` query API for recent task and callback lifecycle
+- SQLite-backed event log with `/events` query API for recent task and bot-callback lifecycle
 - A runner-side provider cache with explicit env-configurable path and retention
 - `/tasks/stats` for queue visibility and persisted result counts
 - `/sessions/stats` and `/sessions/state` for active CLI session visibility
@@ -53,7 +53,7 @@ Recent productized additions:
 
 - `openclaw-cli-pipeline` is archived and should be treated as historical protocol design
 - Its multi-turn orchestration model is now absorbed by [`openclaw-cli-bridge`](https://github.com/AliceLJY/openclaw-cli-bridge)
-- This repository remains the execution plane: Task API, local runner, reconciler loop, and callback delivery
+- This repository remains the execution plane: Task API, local runner, reconciler loop, and bot callback delivery
 
 ## Compatibility Notes
 
@@ -161,15 +161,28 @@ cd docker
 docker compose up -d
 ```
 
-This Docker topology expects host mounts for local session data and Docker callback access. The Docker side is the control plane; the runner side remains the execution plane whether that runner is on the same machine or a remote host.
+This Docker topology expects host mounts for local session data and whatever callback bridge access your bot side needs. The Docker side is the control plane; the runner side remains the execution plane whether that runner is on the same machine or a remote host.
 
 ### 4. Run the smoke test
 
 ```bash
+npm test
+# or
 npm run smoke:task-api
+npm run smoke:notify
 ```
 
-This verifies task persistence, session persistence, and event persistence across a Task API restart.
+This verifies the highest-risk Task API recovery paths:
+
+- pending tasks survive a Task API restart
+- stale `running` tasks are requeued to `pending` on restart
+- successful and failed task results both emit the expected event lifecycle
+- tasks sharing the same CLI session are serialized instead of running concurrently
+- `/notify` can forward to a callback-compatible bot API (the smoke test uses a Discord-compatible mock) and correctly surfaces upstream failures
+
+`npm test` is the CI entrypoint and currently runs the same smoke script. `npm run test:tool` keeps the older manual `mac_remote` tool check available for ad hoc testing.
+
+For local smoke tests, the callback target is injectable through `CALLBACK_API_BASE_URL` (legacy `DISCORD_API_BASE_URL` still works). The callback identity can be provided via `CALLBACK_BOT_TOKEN`, with `DISCORD_BOT_TOKEN` kept as a backward-compatible fallback.
 
 ## Repository Layout
 

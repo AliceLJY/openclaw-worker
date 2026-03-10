@@ -10,7 +10,9 @@
     "server": "node server.js",
     "worker": "node worker.js",
     "smoke:task-api": "node scripts/task-api-smoke.mjs",
-    "test": "node mac-remote-tool.cjs"
+    "smoke:notify": "node scripts/task-api-notify-smoke.mjs",
+    "test": "node scripts/task-api-smoke.mjs && node scripts/task-api-notify-smoke.mjs",
+    "test:tool": "node mac-remote-tool.cjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",

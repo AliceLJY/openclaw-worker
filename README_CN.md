@@ -25,7 +25,7 @@
 
 - Docker-first control plane
 - 运行在宿主机上的执行 runner，拥有真实文件和 CLI 权限
-- hook 加速的 callback 回投
+- hook 加速的 bot callback 回投
 - 负责领任务、恢复和兜底的 reconciler 循环
 
 更落地的部署理解是：
@@ -40,7 +40,7 @@
 
 - SQLite 持久化任务队列和结果存储，Task API 重启后待处理任务不会直接丢失
 - SQLite 持久化活跃会话状态，并提供只读 session stats / state 接口
-- SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 callback 生命周期
+- SQLite 事件日志和 `/events` 查询接口，能看到最近任务与 bot callback 生命周期
 - runner 侧 provider cache 也有了显式路径和 retention 配置
 - `/tasks/stats` 用来查看队列规模和未取走结果数量
 - `/sessions/stats` 和 `/sessions/state` 用来查看活跃 CLI 会话状态
@@ -53,7 +53,7 @@
 
 - `openclaw-cli-pipeline` 已归档，应被视为历史阶段的协议设计
 - 它的多轮编排模型现在已经并入 [`openclaw-cli-bridge`](https://github.com/AliceLJY/openclaw-cli-bridge)
-- 这个仓库继续负责执行平面：Task API、本地 runner、reconciler 循环，以及 callback 回投
+- 这个仓库继续负责执行平面：Task API、本地 runner、reconciler 循环，以及 bot callback 回投
 
 ## 兼容性说明
 
@@ -161,15 +161,28 @@ cd docker
 docker compose up -d
 ```
 
-这个 Docker 拓扑默认需要宿主机 session 数据挂载和 Docker 回调访问。Docker 侧是控制平面；runner 侧始终是执行平面，不管它和 Docker 在同一台机器还是远端机器。
+这个 Docker 拓扑默认需要宿主机 session 数据挂载，以及 Bot 侧所需的 callback bridge 访问。Docker 侧是控制平面；runner 侧始终是执行平面，不管它和 Docker 在同一台机器还是远端机器。
 
 ### 4. 运行 smoke test
 
 ```bash
+npm test
+# 或
 npm run smoke:task-api
+npm run smoke:notify
 ```
 
-这会验证 task、session、event 在 Task API 重启前后都能保留。
+这会验证几条最容易出事故的 Task API 恢复路径：
+
+- pending task 在 Task API 重启后仍然存在
+- 已领取但卡在 `running` 的任务会在重启后回到 `pending`
+- 成功和失败两种结果都会写出完整事件链
+- 共享同一个 CLI session 的任务会被串行化，而不是并发执行
+- `/notify` 可以转发到 callback 兼容的 bot API（当前 smoke 用的是 Discord 兼容 mock），并把上游失败正确回传出来
+
+`npm test` 现在是 CI 入口，当前运行的就是这套 smoke。旧的 `mac_remote` 手工检查仍保留为 `npm run test:tool`，方便临时联调。
+
+为了便于本地 smoke，callback 目标地址现在可通过 `CALLBACK_API_BASE_URL` 注入（旧的 `DISCORD_API_BASE_URL` 仍兼容）。callback 身份优先读取 `CALLBACK_BOT_TOKEN`，同时继续兼容 `DISCORD_BOT_TOKEN`。
 
 ## 仓库结构
 
