@@ -3,7 +3,7 @@
 
 services:
   openclaw-twin:
-    image: ghcr.io/openclaw/openclaw:2026.3.7
+    image: ghcr.io/openclaw/openclaw:2026.3.8
     container_name: openclaw-twin
     restart: always
     ports:
@@ -31,7 +31,7 @@ services:
 
   # CLI 工具（按需启动）
   openclaw-twin-cli:
-    image: ghcr.io/openclaw/openclaw:2026.3.7
+    image: ghcr.io/openclaw/openclaw:2026.3.8
     container_name: openclaw-twin-cli
     profiles: ["cli"]
     volumes:
