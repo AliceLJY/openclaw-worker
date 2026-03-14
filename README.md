@@ -5,7 +5,7 @@
 Docker-first execution plane for OpenClaw-compatible agents. The control plane can run locally in Docker or on a remote server, while the runner executes on the host that actually owns the CLI, files, shell, and local session state.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
 
 ## Tested Environment
 

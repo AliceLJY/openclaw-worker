@@ -5,7 +5,7 @@
 这是一个面向 OpenClaw 兼容 agent 的 Docker-first 执行平面。控制面既可以本地跑在 Docker，也可以部署在远端服务器；真正的 runner 则运行在拥有 CLI、文件、shell 和本地 session 状态的宿主机上。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen)](https://nodejs.org/)
 
 ## 测试环境
 
