@@ -1,3 +1,7 @@
+> **Archived.** This project has been merged into [openclaw-tunnel](https://github.com/AliceLJY/openclaw-tunnel) — a single monorepo with task-api, runner, and plugin. New users should use openclaw-tunnel instead.
+
+---
+
 # OpenClaw Docker Runner
 
 **English** | [简体中文](README_CN.md)
