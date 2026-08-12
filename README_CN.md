@@ -1,3 +1,7 @@
+> **已归档。** 本项目已合并到 [openclaw-tunnel](https://github.com/AliceLJY/openclaw-tunnel)——一个统一包含 task-api、runner 和 plugin 的 monorepo。新用户请改用 openclaw-tunnel。
+
+---
+
 # OpenClaw Docker Runner
 
 [English](README.md) | **简体中文**
